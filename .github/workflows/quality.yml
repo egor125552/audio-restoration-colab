@@ -35,9 +35,7 @@ jobs:
         run: uv sync --group dev
 
       - name: Проверить стиль
-        run: |
-          uv run ruff check . --fix
-          git diff --exit-code
+        run: uv run ruff check .
 
       - name: Запустить быстрые тесты
         run: uv run pytest tests -v

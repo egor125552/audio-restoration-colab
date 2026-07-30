@@ -4,7 +4,6 @@ from pathlib import Path
 
 from common import model_cache_root, parse_worker_args, write_manifest
 
-
 MODEL_FILES = {
     "denoise_normal": "denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt",
     "denoise_aggressive": (

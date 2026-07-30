@@ -18,7 +18,6 @@ from .outputs import (
 )
 from .runtime import ModelResult
 
-
 JobProgress = Callable[[float, str], None]
 FfmpegRunner = Callable[[list[str]], None]
 

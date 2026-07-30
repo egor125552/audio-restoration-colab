@@ -4,7 +4,6 @@ import re
 import zipfile
 from pathlib import Path
 
-
 SUPPORTED_SOURCE_FORMATS = {
     ".aac",
     ".aiff",

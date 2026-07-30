@@ -16,7 +16,6 @@ from .ui_state import (
     selection_view,
 )
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MODEL_CHOICES = [
     (model.short_title, model_id) for model_id, model in MODEL_SPECS.items()

@@ -12,7 +12,6 @@ from .catalog import (
     normalize_settings,
 )
 
-
 DEFAULT_MODEL_ID = "flashsr_medium"
 
 

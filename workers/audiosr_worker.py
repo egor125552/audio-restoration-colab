@@ -5,7 +5,6 @@ from pathlib import Path
 
 from common import parse_worker_args, write_manifest
 
-
 TARGET_RATE = 48_000
 CHUNK_SECONDS = 5.12
 OVERLAP_SECONDS = 0.5
