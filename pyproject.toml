@@ -13,7 +13,7 @@ authors = [
   { name = "Egor Sitko" },
 ]
 dependencies = [
-  "gradio==6.21.0",
+  "gradio==5.50.0",
 ]
 
 [project.scripts]
