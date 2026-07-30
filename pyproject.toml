@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "audio-restoration-colab"
+version = "0.1.0"
+description = "Russian Gradio interface for audio denoising and super-resolution in Google Colab"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = "MIT"
+authors = [
+  { name = "Egor Sitko" },
+]
+dependencies = [
+  "gradio==6.21.0",
+]
+
+[project.scripts]
+audio-restoration-colab = "audio_restoration_colab.app:main"
+
+[dependency-groups]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.16.1",
+]
+browser = [
+  "playwright==1.55.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/audio_restoration_colab"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
