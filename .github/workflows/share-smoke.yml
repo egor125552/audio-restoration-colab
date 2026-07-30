@@ -1,0 +1,30 @@
+name: Проверка публичной ссылки
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  share:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v9.0.0
+      - run: uv sync
+      - name: Получить публичную ссылку
+        run: |
+          uv run audio-restoration-colab --demo --share > share.log 2>&1 &
+          pid=$!
+          for attempt in {1..120}; do
+            grep -E 'https://[^ ]+\.gradio\.live' share.log && exit 0
+            kill -0 "$pid" || { cat share.log; exit 1; }
+            sleep 1
+          done
+          cat share.log
+          exit 1
