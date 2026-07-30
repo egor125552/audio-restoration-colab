@@ -4,6 +4,7 @@ on:
   push:
     branches: ["main"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,17 +17,17 @@ jobs:
     steps:
       # Источник: https://github.com/actions/checkout
       - name: Получить код
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       # Источник: https://github.com/actions/setup-python
       - name: Включить Python 3.11
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.11"
 
       # Источник: https://github.com/astral-sh/setup-uv
       - name: Включить uv
-        uses: astral-sh/setup-uv@v9
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
 
@@ -46,15 +47,15 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Получить код
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Включить Python 3.11
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.11"
 
       - name: Включить uv
-        uses: astral-sh/setup-uv@v9
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
 
@@ -91,7 +92,7 @@ jobs:
 
       - name: Сохранить снимок и лог при ошибке
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: browser-debug
           path: |
