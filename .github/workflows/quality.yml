@@ -82,6 +82,10 @@ jobs:
             if curl --fail --silent http://127.0.0.1:7860/ >/dev/null; then
               exit 0
             fi
+            if ! kill -0 "$(cat gradio.pid)" 2>/dev/null; then
+              tail -n 100 gradio.log
+              exit 1
+            fi
             sleep 2
           done
           tail -n 100 gradio.log
