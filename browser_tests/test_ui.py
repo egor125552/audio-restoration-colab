@@ -44,7 +44,12 @@ def test_russian_interface_and_model_switching(page: Page) -> None:
         name=re.compile("2\\. Модель"),
     )
     model_box.click()
-    page.get_by_text("Дорисовка, большая", exact=True).click()
+    model_box.fill("Дорисовка, большая")
+    page.get_by_role(
+        "option",
+        name="Дорисовка, большая",
+        exact=True,
+    ).click()
     expect(
         page.get_by_role(
             "heading",
