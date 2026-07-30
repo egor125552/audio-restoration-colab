@@ -8,6 +8,7 @@ from pathlib import Path
 from audio_restoration_colab.runtime import (
     ModelResult,
     RuntimeLayout,
+    SubprocessWorker,
     build_worker_command,
     read_worker_manifest,
 )
@@ -74,6 +75,61 @@ class RuntimeTests(unittest.TestCase):
                 read_worker_manifest(job_dir),
                 [ModelResult(role="restored", path=result.resolve())],
             )
+
+    def test_subprocess_worker_prepares_backend_then_reads_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            cache = root / "cache"
+            output = root / "output"
+            source = root / "input.wav"
+            (project / "scripts").mkdir(parents=True)
+            (project / "workers").mkdir()
+            output.mkdir()
+            source.write_bytes(b"input")
+            calls: list[list[str]] = []
+
+            def fake_run(command: list[str], _environment: dict[str, str]) -> None:
+                calls.append(command)
+                if command[0].endswith("python"):
+                    result = output / "restored.wav"
+                    result.write_bytes(b"audio")
+                    (output / "manifest.json").write_text(
+                        json.dumps(
+                            {
+                                "outputs": [
+                                    {"role": "restored", "path": str(result)}
+                                ]
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+
+            messages: list[str] = []
+            worker = SubprocessWorker(
+                layout=RuntimeLayout(project_root=project, cache_root=cache),
+                command_runner=fake_run,
+            )
+
+            results = worker.run(
+                model_id="flashsr_medium",
+                source=source,
+                output_dir=output,
+                settings={"lowpass": True},
+                progress=lambda _fraction, message: messages.append(message),
+            )
+
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(
+                calls[0],
+                [
+                    str(project / "scripts" / "prepare_backend.sh"),
+                    "flashsr",
+                    str(cache),
+                ],
+            )
+            self.assertEqual(results[0].role, "restored")
+            self.assertIn("Запускаю", messages[-1])
 
 
 if __name__ == "__main__":
