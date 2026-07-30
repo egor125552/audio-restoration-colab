@@ -408,7 +408,7 @@ def build_app(*, demo_mode: bool = False):
             model_id: str,
             format_choice: str,
             saved_settings: dict[str, Any],
-            gradio_progress=gr.Progress(track_tqdm=False),
+            gradio_progress=gr.Progress(track_tqdm=False),  # noqa: B008
         ):
             if not input_path:
                 raise gr.Error("Сначала загрузи аудиофайл.")
