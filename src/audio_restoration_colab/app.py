@@ -104,6 +104,8 @@ def build_app(*, demo_mode: bool = False):
 
     with gr.Blocks(
         title="Восстановление и очистка аудио",
+        theme="default",
+        css=CSS,
         delete_cache=(21_600, 21_600),
         analytics_enabled=False,
     ) as app:
@@ -548,8 +550,6 @@ def main() -> None:
         server_name=arguments.server_name,
         server_port=arguments.server_port,
         show_error=True,
-        theme="default",
-        css=CSS,
         max_file_size="2gb",
         enable_monitoring=False,
     )
