@@ -1,0 +1,116 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from audio_restoration_colab.jobs import (
+    AudioJobService,
+    JobProgress,
+    validate_source,
+)
+from audio_restoration_colab.runtime import ModelResult
+
+
+class FakeWorker:
+    def __init__(self) -> None:
+        self.received_settings: dict[str, object] | None = None
+
+    def run(
+        self,
+        *,
+        model_id: str,
+        source: Path,
+        output_dir: Path,
+        settings: dict[str, object],
+        progress: JobProgress,
+    ) -> list[ModelResult]:
+        self.received_settings = settings
+        clean = output_dir / "worker-clean.wav"
+        noise = output_dir / "worker-noise.wav"
+        clean.write_bytes(b"clean")
+        noise.write_bytes(b"noise")
+        return [
+            ModelResult(role="clean", path=clean),
+            ModelResult(role="noise", path=noise),
+        ]
+
+
+def fake_ffmpeg(command: list[str]) -> None:
+    source = Path(command[command.index("-i") + 1])
+    target = Path(command[-1])
+    target.write_bytes(source.read_bytes())
+
+
+class JobTests(unittest.TestCase):
+    def test_source_must_exist_and_have_audio_extension(self) -> None:
+        with self.assertRaisesRegex(ValueError, "не найден"):
+            validate_source(Path("/missing/song.mp3"))
+
+        with tempfile.TemporaryDirectory() as directory:
+            text_file = Path(directory) / "notes.txt"
+            text_file.write_text("not audio", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "формат"):
+                validate_source(text_file)
+
+    def test_job_normalizes_settings_and_creates_files_and_zip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "Моя песня.mp3"
+            source.write_bytes(b"input")
+            worker = FakeWorker()
+            messages: list[str] = []
+            service = AudioJobService(
+                jobs_root=root / "jobs",
+                worker=worker,
+                ffmpeg_runner=fake_ffmpeg,
+            )
+
+            result = service.process(
+                source=source,
+                model_id="denoise_normal",
+                format_choice="mp3",
+                raw_settings={"quality": "maximum", "segment": 999},
+                progress=lambda _fraction, message: messages.append(message),
+            )
+
+            self.assertEqual(
+                worker.received_settings,
+                {"quality": "maximum", "segment": 352},
+            )
+            self.assertEqual(len(result.files), 2)
+            self.assertTrue(all(path.suffix == ".mp3" for path in result.files))
+            self.assertTrue(result.archive.is_file())
+            self.assertEqual(result.primary_preview, result.files[0])
+            self.assertEqual(result.secondary_preview, result.files[1])
+            self.assertIn("Готово", messages[-1])
+
+    def test_cleanup_removes_only_old_job_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            jobs = root / "jobs"
+            old = jobs / "old"
+            current = jobs / "current"
+            old.mkdir(parents=True)
+            current.mkdir()
+            (old / "file.txt").write_text("old", encoding="utf-8")
+            (current / "file.txt").write_text("current", encoding="utf-8")
+            old_timestamp = 1_000_000_000
+            old.touch()
+            import os
+
+            os.utime(old, (old_timestamp, old_timestamp))
+
+            service = AudioJobService(
+                jobs_root=jobs,
+                worker=FakeWorker(),
+                ffmpeg_runner=fake_ffmpeg,
+            )
+            service.cleanup_old_jobs(max_age_seconds=3600, now=1_000_010_000)
+
+            self.assertFalse(old.exists())
+            self.assertTrue(current.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
