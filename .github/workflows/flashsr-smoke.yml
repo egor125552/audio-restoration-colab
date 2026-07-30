@@ -1,0 +1,38 @@
+name: Проверка FlashSR
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  flashsr:
+    name: Скачать и проверить FlashSR
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Получить код
+        uses: actions/checkout@v7.0.1
+
+      - name: Включить uv
+        uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Подготовить системные программы
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg git-lfs
+          git lfs install
+
+      - name: Скачать и установить FlashSR
+        run: |
+          scripts/prepare_backend.sh flashsr "$RUNNER_TEMP/audio-models"
+
+      - name: Проверить код и три файла весов
+        run: |
+          repo="$RUNNER_TEMP/audio-models/repos/flashsr"
+          python="$RUNNER_TEMP/audio-models/envs/flashsr/bin/python"
+          test "$(stat -c %s "$repo/weights/student_ldm.pth")" -gt 900000000
+          test "$(stat -c %s "$repo/weights/sr_vocoder.pth")" -gt 500000000
+          test "$(stat -c %s "$repo/weights/vae.pth")" -gt 1500000000
+          "$python" -c "import sys; sys.path.insert(0, '$repo'); from enhance import build_model, enhance; print('FlashSR готова')"
