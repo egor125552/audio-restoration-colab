@@ -108,6 +108,9 @@ def build_app(*, demo_mode: bool = False):
         theme=gr.themes.Base(primary_hue="blue", neutral_hue="slate"),
         css=CSS,
         delete_cache=(21_600, 21_600),
+        analytics_enabled=False,
+        max_file_size="2gb",
+        enable_monitoring=False,
     ) as app:
         gr.Markdown(
             "# Восстановление и очистка аудио\n\n"
@@ -356,7 +359,7 @@ def build_app(*, demo_mode: bool = False):
             saved_settings: dict[str, Any],
             *values: Any,
         ):
-            all_values = dict(zip(CONTROL_KEYS, values))
+            all_values = dict(zip(CONTROL_KEYS, values, strict=True))
             return merge_active_settings(
                 saved_settings,
                 model_id,

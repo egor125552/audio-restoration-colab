@@ -1,0 +1,100 @@
+name: Проверка проекта
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Код и быстрые тесты
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Источник: https://github.com/actions/checkout
+      - name: Получить код
+        uses: actions/checkout@v7
+
+      # Источник: https://github.com/actions/setup-python
+      - name: Включить Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      # Источник: https://github.com/astral-sh/setup-uv
+      - name: Включить uv
+        uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+
+      - name: Установить интерфейс и тесты
+        run: uv sync --group dev
+
+      - name: Проверить стиль
+        run: uv run ruff check .
+
+      - name: Запустить быстрые тесты
+        run: uv run pytest tests -v
+
+  browser:
+    name: Настоящий браузер
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Получить код
+        uses: actions/checkout@v7
+
+      - name: Включить Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Включить uv
+        uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+
+      - name: Установить интерфейс и браузерные тесты
+        run: uv sync --group dev --group browser
+
+      - name: Установить Chromium
+        run: uv run playwright install --with-deps chromium
+
+      - name: Запустить Gradio без моделей
+        env:
+          AUDIO_RESTORATION_WORKDIR: ${{ runner.temp }}/audio-work
+          AUDIO_RESTORATION_CACHE: ${{ runner.temp }}/audio-models
+        run: |
+          uv run audio-restoration-colab \
+            --demo \
+            --server-name 127.0.0.1 \
+            --server-port 7860 > gradio.log 2>&1 &
+          echo $! > gradio.pid
+
+      - name: Дождаться страницы
+        run: |
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:7860/ >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          tail -n 100 gradio.log
+          exit 1
+
+      - name: Проверить интерфейс
+        run: uv run pytest browser_tests -v
+
+      - name: Сохранить снимок и лог при ошибке
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-debug
+          path: |
+            test-artifacts/
+            gradio.log
+          if-no-files-found: ignore

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import unittest
 import os
 import subprocess
 import sys
+import unittest
 from pathlib import Path
 
 from audio_restoration_colab.catalog import default_browser_settings
