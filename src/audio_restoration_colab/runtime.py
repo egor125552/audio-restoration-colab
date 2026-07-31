@@ -33,6 +33,7 @@ BACKEND_LAYOUT = {
 }
 
 JOB_LOG_ENV = "AUDIO_RESTORATION_JOB_LOG"
+PROJECT_ROOT_ENV = "AUDIO_RESTORATION_PROJECT_ROOT"
 CommandRunner = Callable[[list[str], dict[str, str]], None]
 
 
@@ -57,14 +58,24 @@ class SubprocessWorker:
         progress: Callable[[float, str], None],
     ) -> list[ModelResult]:
         model = get_model(model_id)
+        project_root = _resolve_project_root(self.layout.project_root)
+        resolved_layout = RuntimeLayout(
+            project_root=project_root,
+            cache_root=self.layout.cache_root,
+        )
         log_path = output_dir.parent / "model.log"
         environment = {
             "AUDIO_RESTORATION_CACHE": str(self.layout.cache_root),
+            PROJECT_ROOT_ENV: str(project_root),
             "PYTHONUNBUFFERED": "1",
             JOB_LOG_ENV: str(log_path),
         }
         print(
             f"[audio-restoration] {model.short_title}: лог запуска — {log_path}",
+            flush=True,
+        )
+        print(
+            f"[audio-restoration] Корень проекта: {project_root}",
             flush=True,
         )
         if model.backend not in self._prepared_backends:
@@ -73,11 +84,7 @@ class SubprocessWorker:
                 "Проверяю среду модели. При первом запуске начнётся скачивание…",
             )
             prepare_command = [
-                str(
-                    self.layout.project_root
-                    / "scripts"
-                    / "prepare_backend.sh"
-                ),
+                str(project_root / "scripts" / "prepare_backend.sh"),
                 model.backend,
                 str(self.layout.cache_root),
             ]
@@ -86,7 +93,7 @@ class SubprocessWorker:
 
         progress(0.28, f"Запускаю: {model.short_title}…")
         command = build_worker_command(
-            layout=self.layout,
+            layout=resolved_layout,
             model_id=model_id,
             source=source,
             output_dir=output_dir,
@@ -151,6 +158,31 @@ def read_worker_manifest(job_dir: Path) -> list[ModelResult]:
             raise ValueError("Один из результатов модели отсутствует.")
         results.append(ModelResult(role=role, path=result_path))
     return results
+
+
+def _resolve_project_root(configured_root: Path) -> Path:
+    candidates: list[Path] = []
+    override = os.environ.get(PROJECT_ROOT_ENV)
+    if override:
+        candidates.append(Path(override))
+    candidates.extend([configured_root, Path.cwd()])
+
+    checked: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve()
+        if resolved in checked:
+            continue
+        checked.add(resolved)
+        if (
+            (resolved / "scripts" / "prepare_backend.sh").is_file()
+            and (resolved / "workers").is_dir()
+        ):
+            return resolved
+
+    raise ValueError(
+        "Не найден корень проекта с scripts/prepare_backend.sh и workers. "
+        "Перезапусти ячейки Colab сверху вниз."
+    )
 
 
 def _run_command(command: list[str], environment: dict[str, str]) -> None:
