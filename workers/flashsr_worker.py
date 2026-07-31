@@ -20,7 +20,17 @@ def main() -> None:
     from enhance import build_model, enhance
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = build_model(repository / "weights", device)
+    original_torch_load = torch.load
+
+    def portable_torch_load(*args, **kwargs):
+        kwargs.setdefault("map_location", device)
+        return original_torch_load(*args, **kwargs)
+
+    torch.load = portable_torch_load
+    try:
+        model = build_model(repository / "weights", device)
+    finally:
+        torch.load = original_torch_load
     audio, sample_rate = sf.read(
         str(arguments.input),
         dtype="float32",

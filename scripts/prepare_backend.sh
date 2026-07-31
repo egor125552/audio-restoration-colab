@@ -39,10 +39,17 @@ install_torch_241() {
     torch==2.4.1 torchaudio==2.4.1 torchvision==0.19.1
 }
 
+install_python_tools() {
+  "$UV_BIN" pip install \
+    --python "$ENV_DIR/bin/python" \
+    "setuptools==80.9.0"
+}
+
 case "$BACKEND" in
   separator)
     "$UV_BIN" python install 3.10
     "$UV_BIN" venv --allow-existing --python 3.10 "$ENV_DIR"
+    install_python_tools
     install_torch_241
     "$UV_BIN" pip install \
       --python "$ENV_DIR/bin/python" \
@@ -51,6 +58,7 @@ case "$BACKEND" in
   lavasr)
     "$UV_BIN" python install 3.10
     "$UV_BIN" venv --allow-existing --python 3.10 "$ENV_DIR"
+    install_python_tools
     install_torch_241
     "$UV_BIN" pip install \
       --python "$ENV_DIR/bin/python" \
@@ -60,6 +68,7 @@ case "$BACKEND" in
     echo "Создаю среду FlashSR…"
     "$UV_BIN" python install 3.10
     "$UV_BIN" venv --allow-existing --python 3.10 "$ENV_DIR"
+    install_python_tools
     install_torch_241
     FLASH_REPO="$REPO_ROOT/flashsr"
     if [[ ! -d "$FLASH_REPO/.git" ]]; then
@@ -84,6 +93,7 @@ case "$BACKEND" in
   audiosr)
     "$UV_BIN" python install 3.9
     "$UV_BIN" venv --allow-existing --python 3.9 "$ENV_DIR"
+    install_python_tools
     "$UV_BIN" pip install \
       --python "$ENV_DIR/bin/python" \
       --index-url https://download.pytorch.org/whl/cu121 \

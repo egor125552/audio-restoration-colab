@@ -38,13 +38,34 @@ def main() -> None:
     separator.load_model(model_filename=MODEL_FILES[arguments.model_id])
     raw_paths = separator.separate(str(arguments.input))
     paths = [_resolve_output(arguments.output_dir, item) for item in raw_paths]
-    if len(paths) < 2:
-        raise RuntimeError("Модель DeNoise не вернула оба слоя.")
-    clean, noise = _identify_denoise_outputs(paths)
+    if not paths:
+        raise RuntimeError("Модель DeNoise не вернула результат.")
+    if len(paths) == 1:
+        clean = paths[0]
+        noise = _create_noise_delta(arguments.input, clean, arguments.output_dir)
+    else:
+        clean, noise = _identify_denoise_outputs(paths)
     write_manifest(
         arguments.output_dir,
         [("clean", clean), ("noise", noise)],
     )
+
+
+def _create_noise_delta(source: Path, clean: Path, output_dir: Path) -> Path:
+    import numpy as np
+    import soundfile as sf
+    from scipy.signal import resample_poly
+
+    original, original_rate = sf.read(str(source), dtype="float32", always_2d=True)
+    restored, restored_rate = sf.read(str(clean), dtype="float32", always_2d=True)
+    if restored_rate != original_rate:
+        restored = resample_poly(restored, original_rate, restored_rate, axis=0)
+    if restored.shape[1] != original.shape[1]:
+        restored = np.repeat(restored[:, :1], original.shape[1], axis=1)
+    length = min(len(original), len(restored))
+    target = output_dir / "noise.wav"
+    sf.write(str(target), original[:length] - restored[:length], original_rate)
+    return target
 
 
 def _resolve_output(output_dir: Path, raw_path: str) -> Path:
