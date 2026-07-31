@@ -105,6 +105,44 @@ jobs:
           )
           PY
 
+      - name: Проверить подготовку аудио тем же FFmpeg helper
+        run: |
+          python - <<'PY'
+          import wave
+          from pathlib import Path
+
+          from scripts.probe_audiosr_t4 import PROBE_SECONDS, _prepare_probe_input
+
+          source = Path("/tmp/audiosr-probe-source.wav")
+          sample_rate = 16_000
+          with wave.open(str(source), "wb") as handle:
+              handle.setnchannels(1)
+              handle.setsampwidth(2)
+              handle.setframerate(sample_rate)
+              handle.writeframes(b"\x00\x00" * sample_rate * 6)
+
+          output_dir = Path("/tmp/audiosr-probe-audio")
+          output_dir.mkdir(parents=True, exist_ok=True)
+          target = _prepare_probe_input(source, output_dir)
+          with wave.open(str(target), "rb") as handle:
+              channels = handle.getnchannels()
+              rate = handle.getframerate()
+              width = handle.getsampwidth()
+              duration = handle.getnframes() / rate
+
+          if channels != 1 or rate != 48_000 or width != 3:
+              raise SystemExit(
+                  f"Неожиданный WAV: channels={channels}, rate={rate}, width={width}"
+              )
+          if abs(duration - PROBE_SECONDS) > 0.02:
+              raise SystemExit(
+                  f"Неожиданная длительность WAV: {duration:.3f} с"
+              )
+          print(
+              f"FFmpeg helper готов: mono 48 kHz / 24-bit / {duration:.2f} с."
+          )
+          PY
+
       - name: Проверить экспериментальную ветку блокнота
         run: |
           git ls-remote --exit-code \
