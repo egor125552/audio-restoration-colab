@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import html
 import os
+import secrets
 import shutil
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MODEL_CHOICES = [
     (model.short_title, model_id) for model_id, model in MODEL_SPECS.items()
 ]
+MAX_AUDIOSR_SEED = 2_147_483_647
 
 CONTROL_KEYS = (
     "denoise_quality",
@@ -136,6 +138,11 @@ def build_app(*, demo_mode: bool = False):
             storage_key="audio-restoration-format-v1",
             secret="audio-restoration-colab-format",
         )
+        audiosr_random_seed_state = gr.BrowserState(
+            True,
+            storage_key="audio-restoration-audiosr-random-seed-v1",
+            secret="audio-restoration-colab-audiosr-random-seed",
+        )
 
         with gr.Group():
             input_file = gr.File(
@@ -248,13 +255,24 @@ def build_app(*, demo_mode: bool = False):
                 label="Сила обработки",
                 info="Слишком большое значение может добавить артефакты.",
             )
+            audiosr_random_seed = gr.Checkbox(
+                value=True,
+                label="Новый случайный seed при каждом запуске",
+                info=(
+                    "Включено: каждый запуск создаёт новый вариант. "
+                    "Выключи, чтобы использовать фиксированный seed ниже."
+                ),
+            )
             audiosr_seed = gr.Number(
                 value=initial_view.values["audiosr_seed"],
                 precision=0,
                 minimum=0,
-                maximum=2_147_483_647,
-                label="Случайное зерно",
-                info="Поменяй число, чтобы получить другой вариант.",
+                maximum=MAX_AUDIOSR_SEED,
+                label="Фиксированный seed",
+                info=(
+                    "Используется только когда случайный seed выключен. "
+                    "Введи seed из удачного запуска, чтобы повторить вариант."
+                ),
             )
             audiosr_lowpass = gr.Checkbox(
                 value=initial_view.values["audiosr_lowpass"],
@@ -374,6 +392,12 @@ def build_app(*, demo_mode: bool = False):
             outputs=settings_state,
         )
 
+        audiosr_random_seed.change(
+            lambda value: bool(value),
+            inputs=audiosr_random_seed,
+            outputs=audiosr_random_seed_state,
+        )
+
         output_format.change(
             lambda value: value,
             inputs=output_format,
@@ -403,17 +427,27 @@ def build_app(*, demo_mode: bool = False):
             inputs=output_format_state,
             outputs=output_format,
         )
+        app.load(
+            lambda saved: bool(saved),
+            inputs=audiosr_random_seed_state,
+            outputs=audiosr_random_seed,
+        )
 
         def process_audio(
             input_path: str | None,
             model_id: str,
             format_choice: str,
             saved_settings: dict[str, Any],
+            randomize_audiosr_seed: bool,
             gradio_progress=gr.Progress(track_tqdm=False),  # noqa: B008
         ):
             if not input_path:
                 raise gr.Error("Сначала загрузи аудиофайл.")
-            raw_settings = (saved_settings or {}).get(model_id, {})
+            raw_settings, chosen_seed = _prepare_run_settings(
+                model_id,
+                (saved_settings or {}).get(model_id, {}),
+                bool(randomize_audiosr_seed),
+            )
 
             def report(fraction: float, message: str) -> None:
                 gradio_progress(fraction, desc=message)
@@ -443,9 +477,12 @@ def build_app(*, demo_mode: bool = False):
                 )
             except ValueError as error:
                 raise gr.Error(str(error)) from error
+            message = result.message
+            if chosen_seed is not None:
+                message += f" Случайный seed: {chosen_seed}."
             status_html = (
                 "<div role='status' aria-live='polite'><strong>"
-                + html.escape(result.message)
+                + html.escape(message)
                 + "</strong></div>"
             )
             return (
@@ -464,6 +501,7 @@ def build_app(*, demo_mode: bool = False):
                 model_dropdown,
                 output_format,
                 settings_state,
+                audiosr_random_seed,
             ],
             outputs=[
                 status,
@@ -533,6 +571,19 @@ def _active_values(
             "lowpass": all_values["audiosr_lowpass"],
         }
     return {}
+
+
+def _prepare_run_settings(
+    model_id: str,
+    saved_settings: dict[str, Any],
+    randomize_audiosr_seed: bool,
+) -> tuple[dict[str, Any], int | None]:
+    settings = dict(saved_settings)
+    if model_id != "audiosr_large" or not randomize_audiosr_seed:
+        return settings, None
+    seed = secrets.randbelow(MAX_AUDIOSR_SEED + 1)
+    settings["seed"] = seed
+    return settings, seed
 
 
 def _path_or_none(path: Path | None) -> str | None:
