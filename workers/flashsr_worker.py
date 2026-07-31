@@ -45,11 +45,17 @@ def main() -> None:
                 48_000,
                 sample_rate,
             ).astype(np.float32)
+        if bool(settings.get("lowpass", True)):
+            channel = resample_poly(
+                resample_poly(channel, 2, 3),
+                3,
+                2,
+            )[: len(channel)].astype(np.float32)
         restored = enhance(
             model,
             channel,
             device=device,
-            lowpass=bool(settings.get("lowpass", True)),
+            lowpass=False,
         )
         channels.append(restored)
     shortest = min(len(channel) for channel in channels)

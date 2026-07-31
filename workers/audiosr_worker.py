@@ -20,6 +20,19 @@ def main() -> None:
     import soundfile as sf
     import torch
     from audiosr import build_model
+    import audiosr.pipeline as audiosr_pipeline
+
+    original_lowpass = audiosr_pipeline.lowpass_filtering_prepare_inference
+
+    def safe_lowpass(batch):
+        try:
+            return original_lowpass(batch)
+        except ValueError as error:
+            if "critical frequencies" not in str(error):
+                raise
+            return {"waveform_lowpass": batch["waveform"].clone()}
+
+    audiosr_pipeline.lowpass_filtering_prepare_inference = safe_lowpass
 
     audio, _ = librosa.load(
         str(arguments.input),
