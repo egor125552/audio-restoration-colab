@@ -131,6 +131,15 @@ class JobTests(unittest.TestCase):
             self.assertIn("flashsr_medium", log_text)
             self.assertIn("CUDA out of memory", log_text)
 
+    def test_jobs_outside_system_temp_are_redirected_for_gradio(self) -> None:
+        service = AudioJobService(
+            jobs_root=Path("/content/audio-restoration-work"),
+            worker=FakeWorker(),
+            ffmpeg_runner=fake_ffmpeg,
+        )
+        expected = Path(tempfile.gettempdir()).resolve() / "audio-restoration-work"
+        self.assertEqual(service.jobs_root, expected)
+
     def test_cleanup_removes_only_old_job_directories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
