@@ -5,6 +5,7 @@ on:
     paths:
       - "scripts/prepare_audiosr_t4.sh"
       - "scripts/probe_audiosr_t4.py"
+      - "scripts/check_audiosr_unet_export.py"
       - "tests/test_audiosr_t4_probe.py"
       - ".github/workflows/t4-stack-check.yml"
   workflow_dispatch:
@@ -14,7 +15,7 @@ permissions:
 
 jobs:
   stack:
-    name: Установка и импорты без GPU
+    name: Установка, API и граф без GPU
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -80,12 +81,19 @@ jobs:
           print("Torch-TensorRT содержит все опции, используемые probe.")
           PY
 
+      - name: Захватить реальный AudioSR UNet на meta-тензорах
+        run: |
+          /tmp/audio-restoration-t4-stack/envs/audiosr_trt/bin/python \
+            scripts/check_audiosr_unet_export.py
+
       - name: Проверить CLI probe без запуска GPU
         run: |
           /tmp/audio-restoration-t4-stack/envs/audiosr_trt/bin/python \
             scripts/probe_audiosr_t4.py --help
 
-      - name: Проверить синтаксис обоих скриптов
+      - name: Проверить синтаксис скриптов
         run: |
           bash -n scripts/prepare_audiosr_t4.sh
-          python -m py_compile scripts/probe_audiosr_t4.py
+          python -m py_compile \
+            scripts/probe_audiosr_t4.py \
+            scripts/check_audiosr_unet_export.py
