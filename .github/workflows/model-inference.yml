@@ -7,9 +7,6 @@ on:
         description: JSON-список моделей
         required: true
         default: '["denoise_normal","denoise_aggressive","lavasr_small","flashsr_medium","audiosr_large"]'
-  pull_request:
-    branches:
-      - main
 
 permissions:
   contents: read
@@ -22,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        model: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.models || '["denoise_normal","denoise_aggressive"]') }}
+        model: ${{ fromJSON(inputs.models) }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.0.0
