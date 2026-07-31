@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+PROGRESS_PREFIX = "@@AUDIO_RESTORATION_PROGRESS@@"
+
 
 def parse_worker_args(
     description: str,
@@ -29,6 +31,24 @@ def parse_worker_args(
         parser.error("Входной аудиофайл не найден.")
     arguments.output_dir.mkdir(parents=True, exist_ok=True)
     return arguments, settings
+
+
+def report_progress(
+    fraction: float,
+    message: str,
+    *,
+    tqdm_span: float | None = None,
+) -> None:
+    payload: dict[str, Any] = {
+        "fraction": max(0.0, min(1.0, float(fraction))),
+        "message": str(message),
+    }
+    if tqdm_span is not None:
+        payload["tqdm_span"] = max(0.0, min(1.0, float(tqdm_span)))
+    print(
+        PROGRESS_PREFIX + json.dumps(payload, ensure_ascii=False),
+        flush=True,
+    )
 
 
 def model_cache_root() -> Path:
