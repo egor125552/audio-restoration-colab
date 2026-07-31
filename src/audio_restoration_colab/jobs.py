@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 from collections.abc import Callable
@@ -78,7 +79,7 @@ class AudioJobService:
         worker: Worker,
         ffmpeg_runner: FfmpegRunner | None = None,
     ) -> None:
-        self.jobs_root = jobs_root
+        self.jobs_root = _gradio_safe_jobs_root(jobs_root)
         self.worker = worker
         self.ffmpeg_runner = ffmpeg_runner or _run_ffmpeg
 
@@ -222,6 +223,22 @@ def _run_ffmpeg(command: list[str]) -> None:
         raise ValueError(
             f"Не удалось преобразовать формат: {short_detail}"
         ) from error
+
+
+def _gradio_safe_jobs_root(configured_root: Path) -> Path:
+    requested = configured_root.expanduser().resolve()
+    temp_root = Path(tempfile.gettempdir()).resolve()
+    try:
+        requested.relative_to(temp_root)
+    except ValueError:
+        fallback = temp_root / "audio-restoration-work"
+        print(
+            "[audio-restoration] Рабочая папка перенаправлена в "
+            f"{fallback}, чтобы Gradio мог отдавать результаты и логи.",
+            flush=True,
+        )
+        return fallback
+    return requested
 
 
 def _append_log(log_path: Path, text: str) -> None:
