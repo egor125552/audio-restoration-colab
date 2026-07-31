@@ -101,6 +101,17 @@ def _disable_training_checkpointing() -> None:
     )
 
 
+def _tensorrt_options(torch):
+    return {
+        "enabled_precisions": {torch.float32, torch.float16},
+        "min_block_size": 3,
+        "optimization_level": 4,
+        "truncate_long_and_double": True,
+        "use_python_runtime": False,
+        "pass_through_build_failures": True,
+    }
+
+
 def _run_once(*, model, source: Path, seed: int, steps: int, guidance: float, torch):
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats(0)
@@ -282,13 +293,7 @@ def main() -> int:
         diffusion_module,
         backend="torch_tensorrt",
         dynamic=False,
-        options={
-            "enabled_precisions": {torch.float32, torch.float16},
-            "min_block_size": 3,
-            "optimization_level": 4,
-            "truncate_long_and_double": True,
-            "use_python_runtime": False,
-        },
+        options=_tensorrt_options(torch),
     )
     _replace_module(model, module_name, compiled_diffusion)
 
