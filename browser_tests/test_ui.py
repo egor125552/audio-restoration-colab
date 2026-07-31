@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import wave
 from pathlib import Path
 
@@ -34,15 +33,16 @@ def test_russian_interface_and_model_switching(page: Page) -> None:
     expect(page.get_by_role("status")).to_contain_text(
         "Ожидаю аудиофайл"
     )
+    expect(
+        page.get_by_text("Скачать лог последнего запуска", exact=True)
+    ).to_be_visible()
 
     test_audio = _create_test_wave(Path("test-artifacts/input.wav"))
     page.locator("input[type='file']").set_input_files(str(test_audio))
     expect(page.get_by_text("input.wav", exact=False)).to_be_visible()
 
-    model_box = page.get_by_role(
-        "combobox",
-        name=re.compile("2\\. Модель"),
-    )
+    model_box = page.get_by_label("2. Модель", exact=False)
+    expect(model_box).to_be_visible()
     model_box.click()
     model_box.fill("Дорисовка, большая")
     page.get_by_role(
