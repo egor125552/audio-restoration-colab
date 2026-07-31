@@ -3,7 +3,7 @@ set -euo pipefail
 
 CACHE_ROOT="${1:-/content/audio-restoration-models}"
 ENV_DIR="$CACHE_ROOT/envs/audiosr_trt"
-READY_MARKER="$ENV_DIR/.audio-restoration-ready-v4"
+READY_MARKER="$ENV_DIR/.audio-restoration-ready-v5"
 STACK_CHECK_ONLY="${AUDIO_RESTORATION_T4_STACK_CHECK:-0}"
 
 if command -v nvidia-smi >/dev/null 2>&1; then
@@ -64,7 +64,8 @@ mkdir -p "$(dirname "$ENV_DIR")"
 
 "$UV_BIN" pip install \
   --python "$ENV_DIR/bin/python" \
-  "git+https://github.com/haoheliu/versatile_audio_super_resolution.git@d312fbab9f0e94087d9f2802d03cf184353cc805"
+  "git+https://github.com/haoheliu/versatile_audio_super_resolution.git@d312fbab9f0e94087d9f2802d03cf184353cc805" \
+  "matplotlib==3.9.4"
 
 "$UV_BIN" pip check --python "$ENV_DIR/bin/python"
 
@@ -77,10 +78,14 @@ import importlib.metadata
 import os
 
 import audiosr
+import audiosr.utilities.tools as audiosr_tools
+import matplotlib
 import tensorrt
 import torch
 
 print("AudioSR импортирован:", audiosr.__file__)
+print("AudioSR utilities импортирован:", audiosr_tools.__file__)
+print("Matplotlib:", matplotlib.__version__)
 print("PyTorch:", torch.__version__)
 print("CUDA доступна:", torch.cuda.is_available())
 print("Torch-TensorRT package:", importlib.metadata.version("torch-tensorrt"))
