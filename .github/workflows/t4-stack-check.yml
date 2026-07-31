@@ -67,7 +67,7 @@ jobs:
               "enabled_precisions",
               "min_block_size",
               "optimization_level",
-              "truncate_long_and_double",
+              "truncate_double",
               "use_python_runtime",
               "pass_through_build_failures",
           }
