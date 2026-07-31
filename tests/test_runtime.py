@@ -4,9 +4,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from audio_restoration_colab.runtime import (
     JOB_LOG_ENV,
+    PROJECT_ROOT_ENV,
     ModelResult,
     RuntimeLayout,
     SubprocessWorker,
@@ -86,6 +88,10 @@ class RuntimeTests(unittest.TestCase):
             source = root / "input.wav"
             (project / "scripts").mkdir(parents=True)
             (project / "workers").mkdir()
+            (project / "scripts" / "prepare_backend.sh").write_text(
+                "#!/usr/bin/env bash\n",
+                encoding="utf-8",
+            )
             output.mkdir()
             source.write_bytes(b"input")
             calls: list[list[str]] = []
@@ -135,8 +141,72 @@ class RuntimeTests(unittest.TestCase):
                 environments[0][JOB_LOG_ENV],
                 str(root / "model.log"),
             )
+            self.assertEqual(environments[0][PROJECT_ROOT_ENV], str(project))
             self.assertEqual(results[0].role, "restored")
             self.assertIn("Запускаю", messages[-1])
+
+    def test_worker_recovers_project_root_from_current_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "audio-restoration-colab"
+            installed_root = root / ".venv" / "lib" / "python3.11"
+            cache = root / "cache"
+            output = root / "output"
+            source = root / "input.wav"
+            (project / "scripts").mkdir(parents=True)
+            (project / "workers").mkdir()
+            (project / "scripts" / "prepare_backend.sh").write_text(
+                "#!/usr/bin/env bash\n",
+                encoding="utf-8",
+            )
+            output.mkdir()
+            source.write_bytes(b"input")
+            calls: list[list[str]] = []
+
+            def fake_run(command: list[str], environment: dict[str, str]) -> None:
+                calls.append(command)
+                if command[0].endswith("python"):
+                    result = output / "restored.wav"
+                    result.write_bytes(b"audio")
+                    (output / "manifest.json").write_text(
+                        json.dumps(
+                            {
+                                "outputs": [
+                                    {"role": "restored", "path": str(result)}
+                                ]
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+
+            worker = SubprocessWorker(
+                layout=RuntimeLayout(
+                    project_root=installed_root,
+                    cache_root=cache,
+                ),
+                command_runner=fake_run,
+            )
+
+            with patch(
+                "audio_restoration_colab.runtime.Path.cwd",
+                return_value=project,
+            ):
+                worker.run(
+                    model_id="flashsr_medium",
+                    source=source,
+                    output_dir=output,
+                    settings={"lowpass": True},
+                    progress=lambda _fraction, _message: None,
+                )
+
+            self.assertEqual(
+                calls[0][0],
+                str(project / "scripts" / "prepare_backend.sh"),
+            )
+            self.assertEqual(
+                calls[1][1],
+                str(project / "workers" / "flashsr_worker.py"),
+            )
 
 
 if __name__ == "__main__":
