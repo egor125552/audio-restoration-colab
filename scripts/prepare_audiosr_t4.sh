@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Hosted Colab exports its own interactive matplotlib backend. This isolated
+# environment does not necessarily contain Colab's backend package, while
+# AudioSR imports pyplot from audiosr.utilities.tools during model setup.
+# Force a headless backend before any AudioSR/matplotlib import, matching the
+# protection already used by the main model-worker runtime.
+export MPLBACKEND=Agg
+
 CURRENT_STAGE="startup"
 trap 'rc=$?; echo "" >&2; echo "T4 setup failed during: $CURRENT_STAGE" >&2; echo "Line $LINENO: $BASH_COMMAND" >&2; echo "Exit code: $rc" >&2; exit $rc' ERR
 
@@ -92,6 +99,7 @@ import torch
 print("AudioSR импортирован:", audiosr.__file__)
 print("AudioSR utilities импортирован:", audiosr_tools.__file__)
 print("Matplotlib:", matplotlib.__version__)
+print("Matplotlib backend:", matplotlib.get_backend())
 print("PyTorch:", torch.__version__)
 print("CUDA доступна:", torch.cuda.is_available())
 print("Torch-TensorRT package:", importlib.metadata.version("torch-tensorrt"))
