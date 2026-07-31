@@ -1,0 +1,106 @@
+name: Проверка Colab-блокнота AudioSR T4
+
+on:
+  pull_request:
+    paths:
+      - "notebooks/audiosr_t4_colab_probe.ipynb"
+      - "scripts/prepare_audiosr_t4.sh"
+      - "scripts/probe_audiosr_t4.py"
+      - "scripts/check_audiosr_unet_export.py"
+      - ".github/workflows/colab-t4-notebook-check.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: colab-t4-notebook-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  colab-runtime:
+    name: Официальная среда Google Colab без GPU
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: us-docker.pkg.dev/colab-images/public/cpu-runtime:latest
+      options: --user 0
+
+    steps:
+      - name: Получить код
+        uses: actions/checkout@v7.0.1
+
+      - name: Показать реальную Colab-среду
+        run: |
+          python - <<'PY'
+          import platform
+          import sys
+          import torch
+
+          print("Python:", sys.version)
+          print("Platform:", platform.platform())
+          print("PyTorch:", torch.__version__)
+          print("PyTorch CUDA build:", torch.version.cuda)
+          print("CUDA доступна на CPU runner:", torch.cuda.is_available())
+          PY
+
+      - name: Проверить структуру маленького блокнота
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("notebooks/audiosr_t4_colab_probe.ipynb")
+          notebook = json.loads(path.read_text(encoding="utf-8"))
+          if notebook.get("nbformat") != 4:
+              raise SystemExit("Ожидался Jupyter nbformat 4")
+          cells = notebook.get("cells", [])
+          if len(cells) != 7:
+              raise SystemExit(f"Ожидалось 7 компактных ячеек, найдено {len(cells)}")
+          source = "\n".join(
+              "".join(cell.get("source", []))
+              for cell in cells
+              if cell.get("cell_type") == "code"
+          )
+          required = [
+              "torch.cuda.is_available()",
+              "agent/audiosr-t4-tensorrt",
+              "prepare_audiosr_t4.sh",
+              "files.upload()",
+              "probe_audiosr_t4.py",
+              "--steps', '30",
+              "--runs', '2",
+          ]
+          missing = [item for item in required if item not in source]
+          if missing:
+              raise SystemExit("В блокноте не найдены обязательные части: " + ", ".join(missing))
+          print("Блокнот валиден и содержит все обязательные шаги.")
+          PY
+
+      - name: Установить uv внутри официального Colab image
+        run: python -m pip install --disable-pip-version-check -q "uv==0.12.0"
+
+      - name: Создать тот же изолированный TensorRT-стек, что создаст блокнот
+        env:
+          AUDIO_RESTORATION_T4_STACK_CHECK: "1"
+        run: |
+          mkdir -p /content
+          bash scripts/prepare_audiosr_t4.sh /tmp/audio-restoration-colab-t4
+
+      - name: Проверить реальный AudioSR UNet в этой же базе
+        run: |
+          /tmp/audio-restoration-colab-t4/envs/audiosr_trt/bin/python \
+            scripts/check_audiosr_unet_export.py
+
+      - name: Проверить CLI probe
+        run: |
+          /tmp/audio-restoration-colab-t4/envs/audiosr_trt/bin/python \
+            scripts/probe_audiosr_t4.py --help
+
+      - name: Проверить синтаксис
+        run: |
+          bash -n scripts/prepare_audiosr_t4.sh
+          python -m json.tool notebooks/audiosr_t4_colab_probe.ipynb >/dev/null
+          python -m py_compile \
+            scripts/probe_audiosr_t4.py \
+            scripts/check_audiosr_unet_export.py
