@@ -66,9 +66,9 @@ mkdir -p "$(dirname "$ENV_DIR")"
 
 "$UV_BIN" pip check --python "$ENV_DIR/bin/python"
 
-touch "$READY_MARKER"
-
-echo "Среда AudioSR TensorRT готова: $ENV_DIR"
+# Не создаём READY_MARKER раньше этой проверки. Если реальный импорт TensorRT
+# на T4 упадёт, следующий запуск обязан повторить установку/проверку, а не
+# ошибочно сообщить, что среда уже готова.
 AUDIO_RESTORATION_T4_STACK_CHECK="$STACK_CHECK_ONLY" \
   "$ENV_DIR/bin/python" - <<'PY'
 import importlib.metadata
@@ -92,3 +92,6 @@ else:
     print("GPU:", torch.cuda.get_device_name(0))
     print("Torch-TensorRT import:", torch_tensorrt.__version__)
 PY
+
+touch "$READY_MARKER"
+echo "Среда AudioSR TensorRT готова: $ENV_DIR"
