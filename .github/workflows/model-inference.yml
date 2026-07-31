@@ -7,9 +7,9 @@ on:
         description: JSON-список моделей
         required: true
         default: '["denoise_normal","denoise_aggressive","lavasr_small","flashsr_medium","audiosr_large"]'
-  push:
+  pull_request:
     branches:
-      - ci/denoise-smoke-20260731
+      - main
 
 permissions:
   contents: read
