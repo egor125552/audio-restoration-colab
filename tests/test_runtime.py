@@ -142,6 +142,7 @@ class RuntimeTests(unittest.TestCase):
                 str(root / "model.log"),
             )
             self.assertEqual(environments[0][PROJECT_ROOT_ENV], str(project))
+            self.assertEqual(environments[0]["MPLBACKEND"], "Agg")
             self.assertEqual(results[0].role, "restored")
             self.assertIn("Запускаю", messages[-1])
 
