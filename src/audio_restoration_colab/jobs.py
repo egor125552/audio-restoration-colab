@@ -54,6 +54,12 @@ class Worker(Protocol):
         ...
 
 
+class JobProcessingError(ValueError):
+    def __init__(self, message: str, *, log_path: Path) -> None:
+        super().__init__(message)
+        self.log_path = log_path
+
+
 @dataclass(frozen=True)
 class JobResult:
     files: list[Path]
@@ -61,6 +67,7 @@ class JobResult:
     primary_preview: Path | None
     secondary_preview: Path | None
     message: str
+    log_path: Path
 
 
 class AudioJobService:
@@ -90,55 +97,78 @@ class AudioJobService:
         job_dir = self._new_job_dir()
         raw_dir = job_dir / "raw"
         formatted_dir = job_dir / "results"
+        log_path = job_dir / "model.log"
         raw_dir.mkdir(parents=True)
         formatted_dir.mkdir()
-
-        progress(0.05, "Подготавливаю выбранную модель…")
-        raw_results = self.worker.run(
-            model_id=model_id,
-            source=source,
-            output_dir=raw_dir,
-            settings=settings,
-            progress=progress,
-        )
-        if not raw_results:
-            raise ValueError("Модель не вернула ни одного файла.")
-
-        extension = output_extension(format_choice, source)
-        source_name = safe_stem(source.name)
-        files: list[Path] = []
-        total = len(raw_results)
-        for index, raw_result in enumerate(raw_results, start=1):
-            role_title = ROLE_TITLES.get(raw_result.role, raw_result.role)
-            filename = f"{source_name} - {role_title}{extension}"
-            target = _unique_path(formatted_dir / filename)
-            progress(
-                0.78 + (0.12 * index / total),
-                f"Сохраняю результат {index} из {total}…",
-            )
-            self.ffmpeg_runner(
-                build_ffmpeg_command(raw_result.path, target)
-            )
-            if not target.is_file():
-                raise ValueError("Не удалось сохранить готовый аудиофайл.")
-            files.append(target)
-
-        progress(0.93, "Собираю ZIP-архив…")
-        archive = create_result_zip(
-            files,
-            job_dir / f"{source_name} - все результаты.zip",
-        )
-        progress(1.0, "Готово. Файлы можно слушать и скачивать.")
-        return JobResult(
-            files=files,
-            archive=archive,
-            primary_preview=files[0] if files else None,
-            secondary_preview=files[1] if len(files) > 1 else None,
-            message=(
-                f"Готово: создано файлов — {len(files)}. "
-                "Ниже можно скачать каждый файл или общий ZIP."
+        log_path.write_text(
+            (
+                f"Время запуска: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"Модель: {model_id}\n"
+                f"Исходный файл: {source.name}\n"
             ),
+            encoding="utf-8",
         )
+
+        try:
+            progress(0.05, "Подготавливаю выбранную модель…")
+            raw_results = self.worker.run(
+                model_id=model_id,
+                source=source,
+                output_dir=raw_dir,
+                settings=settings,
+                progress=progress,
+            )
+            if not raw_results:
+                raise ValueError("Модель не вернула ни одного файла.")
+
+            extension = output_extension(format_choice, source)
+            source_name = safe_stem(source.name)
+            files: list[Path] = []
+            total = len(raw_results)
+            for index, raw_result in enumerate(raw_results, start=1):
+                role_title = ROLE_TITLES.get(raw_result.role, raw_result.role)
+                filename = f"{source_name} - {role_title}{extension}"
+                target = _unique_path(formatted_dir / filename)
+                progress(
+                    0.78 + (0.12 * index / total),
+                    f"Сохраняю результат {index} из {total}…",
+                )
+                self.ffmpeg_runner(
+                    build_ffmpeg_command(raw_result.path, target)
+                )
+                if not target.is_file():
+                    raise ValueError("Не удалось сохранить готовый аудиофайл.")
+                files.append(target)
+
+            progress(0.93, "Собираю ZIP-архив…")
+            archive = create_result_zip(
+                files,
+                job_dir / f"{source_name} - все результаты.zip",
+            )
+            progress(1.0, "Готово. Файлы можно слушать и скачивать.")
+            _append_log(log_path, "\nГотово: обработка завершена успешно.\n")
+            return JobResult(
+                files=files,
+                archive=archive,
+                primary_preview=files[0] if files else None,
+                secondary_preview=files[1] if len(files) > 1 else None,
+                message=(
+                    f"Готово: создано файлов — {len(files)}. "
+                    "Ниже можно скачать каждый файл или общий ZIP."
+                ),
+                log_path=log_path,
+            )
+        except ValueError as error:
+            _append_log(log_path, f"\nОШИБКА: {error}\n")
+            print(f"[audio-restoration] ОШИБКА: {error}", flush=True)
+            print(
+                f"[audio-restoration] Полный лог: {log_path}",
+                flush=True,
+            )
+            raise JobProcessingError(
+                str(error),
+                log_path=log_path,
+            ) from error
 
     def cleanup_old_jobs(
         self,
@@ -192,6 +222,11 @@ def _run_ffmpeg(command: list[str]) -> None:
         raise ValueError(
             f"Не удалось преобразовать формат: {short_detail}"
         ) from error
+
+
+def _append_log(log_path: Path, text: str) -> None:
+    with log_path.open("a", encoding="utf-8") as log_file:
+        log_file.write(text)
 
 
 def _unique_path(path: Path) -> Path:

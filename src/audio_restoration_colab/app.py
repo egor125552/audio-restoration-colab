@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .catalog import MODEL_SPECS, default_browser_settings, get_model
-from .jobs import AudioJobService, JobProgress
+from .jobs import AudioJobService, JobProcessingError, JobProgress
 from .runtime import ModelResult, RuntimeLayout, SubprocessWorker
 from .ui_state import (
     DEFAULT_MODEL_ID,
@@ -302,6 +302,10 @@ def build_app(*, demo_mode: bool = False):
             label="Скачать все результаты одним ZIP",
             interactive=False,
         )
+        diagnostic_log = gr.File(
+            label="Скачать лог последнего запуска",
+            interactive=False,
+        )
 
         controls = [
             denoise_quality,
@@ -422,6 +426,21 @@ def build_app(*, demo_mode: bool = False):
                     raw_settings=raw_settings,
                     progress=report,
                 )
+            except JobProcessingError as error:
+                status_html = (
+                    "<div role='status' aria-live='assertive'><strong>Ошибка: "
+                    + html.escape(str(error))
+                    + "</strong><br>Полный лог сохранён ниже и одновременно "
+                    "выведен в консоль Colab.</div>"
+                )
+                return (
+                    status_html,
+                    None,
+                    None,
+                    [],
+                    None,
+                    str(error.log_path),
+                )
             except ValueError as error:
                 raise gr.Error(str(error)) from error
             status_html = (
@@ -435,6 +454,7 @@ def build_app(*, demo_mode: bool = False):
                 _path_or_none(result.secondary_preview),
                 [str(path) for path in result.files],
                 str(result.archive),
+                str(result.log_path),
             )
 
         run_button.click(
@@ -451,6 +471,7 @@ def build_app(*, demo_mode: bool = False):
                 secondary_preview,
                 result_files,
                 result_zip,
+                diagnostic_log,
             ],
             concurrency_limit=1,
             show_progress="full",
