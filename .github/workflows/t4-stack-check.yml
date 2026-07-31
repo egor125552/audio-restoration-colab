@@ -20,10 +20,10 @@ jobs:
       - name: Получить код
         uses: actions/checkout@v7.0.1
 
-      - name: Включить uv
+      - name: Включить uv без многогигабайтного cache
         uses: astral-sh/setup-uv@v9.0.0
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Установить тот же стек, что будет в Colab
         env:
