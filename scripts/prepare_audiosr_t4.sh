@@ -13,7 +13,7 @@ trap 'rc=$?; echo "" >&2; echo "T4 setup failed during: $CURRENT_STAGE" >&2; ech
 
 CACHE_ROOT="${1:-/content/audio-restoration-models}"
 ENV_DIR="$CACHE_ROOT/envs/audiosr_trt"
-READY_MARKER="$ENV_DIR/.audio-restoration-ready-v5"
+READY_MARKER="$ENV_DIR/.audio-restoration-ready-v6"
 STACK_CHECK_ONLY="${AUDIO_RESTORATION_T4_STACK_CHECK:-0}"
 
 CURRENT_STAGE="detect NVIDIA GPU"
@@ -39,6 +39,8 @@ else
   echo "uv не найден. Сначала выполни установочную ячейку проекта." >&2
   exit 3
 fi
+
+echo "uv: $($UV_BIN --version)"
 
 if [[ -f "$READY_MARKER" ]]; then
   echo "Среда AudioSR TensorRT уже готова: $ENV_DIR"
@@ -101,9 +103,12 @@ print("AudioSR utilities импортирован:", audiosr_tools.__file__)
 print("Matplotlib:", matplotlib.__version__)
 print("Matplotlib backend:", matplotlib.get_backend())
 print("PyTorch:", torch.__version__)
+print("PyTorch CUDA build:", torch.version.cuda)
 print("CUDA доступна:", torch.cuda.is_available())
 print("Torch-TensorRT package:", importlib.metadata.version("torch-tensorrt"))
 print("TensorRT:", tensorrt.__version__)
+for package in ("numpy", "scipy", "librosa", "numba", "transformers"):
+    print(f"{package}:", importlib.metadata.version(package))
 
 if os.environ.get("AUDIO_RESTORATION_T4_STACK_CHECK") == "1":
     print("CI без GPU: import torch_tensorrt пропущен, потому что 2.4.0 запрашивает CUDA device при импорте.")
