@@ -66,6 +66,7 @@ jobs:
           required = [
               "torch.cuda.is_available()",
               "agent/audiosr-t4-tensorrt",
+              "uv==0.12.0",
               "prepare_audiosr_t4.sh",
               "files.upload()",
               "probe_audiosr_t4.py",
