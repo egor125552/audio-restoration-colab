@@ -165,7 +165,7 @@ def _resolve_project_root(configured_root: Path) -> Path:
     override = os.environ.get(PROJECT_ROOT_ENV)
     if override:
         candidates.append(Path(override))
-    candidates.extend([Path.cwd(), configured_root])
+    candidates.extend([configured_root, Path.cwd()])
 
     checked: set[Path] = set()
     for candidate in candidates:
