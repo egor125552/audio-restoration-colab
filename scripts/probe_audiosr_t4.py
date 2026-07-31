@@ -106,7 +106,7 @@ def _tensorrt_options(torch):
         "enabled_precisions": {torch.float32, torch.float16},
         "min_block_size": 3,
         "optimization_level": 4,
-        "truncate_long_and_double": True,
+        "truncate_double": True,
         "use_python_runtime": False,
         "pass_through_build_failures": True,
     }
