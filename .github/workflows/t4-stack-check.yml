@@ -35,6 +35,7 @@ jobs:
       - name: Установить тот же стек, что будет в Colab
         env:
           AUDIO_RESTORATION_T4_STACK_CHECK: "1"
+          MPLBACKEND: "module://matplotlib_inline.backend_inline"
         run: bash scripts/prepare_audiosr_t4.sh /tmp/audio-restoration-t4-stack
 
       - name: Проверить API закреплённого AudioSR
@@ -91,7 +92,9 @@ jobs:
           /tmp/audio-restoration-t4-stack/envs/audiosr_trt/bin/python \
             scripts/check_audiosr_unet_export.py
 
-      - name: Проверить CLI probe без запуска GPU
+      - name: Проверить CLI probe при Colab matplotlib backend
+        env:
+          MPLBACKEND: "module://matplotlib_inline.backend_inline"
         run: |
           /tmp/audio-restoration-t4-stack/envs/audiosr_trt/bin/python \
             scripts/probe_audiosr_t4.py --help
