@@ -1,12 +1,6 @@
-name: Настоящий инференс моделей
+name: Диагностика DeNoise normal
 
 on:
-  workflow_dispatch:
-    inputs:
-      models:
-        description: JSON-список моделей
-        required: true
-        default: '["denoise_normal","denoise_aggressive","lavasr_small","flashsr_medium","audiosr_large"]'
   pull_request:
     branches:
       - main
@@ -15,14 +9,10 @@ permissions:
   contents: read
 
 jobs:
-  inference:
-    name: ${{ matrix.model }}
+  denoise-normal-diagnostic:
+    name: denoise_normal diagnostic
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        model: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.models || '["denoise_normal","denoise_aggressive"]') }}
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.0.0
@@ -38,8 +28,47 @@ jobs:
         run: uv sync
       - name: Секундный WAV
         run: ffmpeg -f lavfi -i "sine=frequency=440:duration=1" -ar 48000 -ac 1 "$RUNNER_TEMP/input.wav" -y
-      - name: Скачать модель и сделать настоящий инференс
+      - name: Подготовить среду separator
+        env:
+          AUDIO_RESTORATION_CACHE: ${{ runner.temp }}/audio-models
+        run: timeout 180s ./scripts/prepare_backend.sh separator "$AUDIO_RESTORATION_CACHE"
+      - name: Отдельно загрузить вес denoise_normal
         env:
           AUDIO_RESTORATION_CACHE: ${{ runner.temp }}/audio-models
           PYTHONUNBUFFERED: "1"
-        run: uv run python scripts/ci_model_smoke.py "${{ matrix.model }}" "$RUNNER_TEMP/input.wav"
+        run: |
+          timeout 180s "$AUDIO_RESTORATION_CACHE/envs/separator/bin/python" - <<'PY'
+          from audio_separator.separator import Separator
+          import os
+          from pathlib import Path
+
+          cache = Path(os.environ["AUDIO_RESTORATION_CACHE"])
+          separator = Separator(
+              output_dir=str(cache / "diagnostic-output"),
+              model_file_dir=str(cache / "weights" / "separator"),
+              output_format="WAV",
+              use_autocast=True,
+              mdxc_params={
+                  "segment_size": 256,
+                  "override_model_segment_size": True,
+                  "batch_size": 1,
+                  "overlap": 8,
+              },
+          )
+          print("Начинаю load_model denoise_normal", flush=True)
+          separator.load_model(model_filename="denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt")
+          print("load_model denoise_normal готов", flush=True)
+          PY
+      - name: Настоящий инференс denoise_normal
+        env:
+          AUDIO_RESTORATION_CACHE: ${{ runner.temp }}/audio-models
+          PYTHONUNBUFFERED: "1"
+        run: |
+          mkdir -p "$RUNNER_TEMP/normal-output"
+          timeout 180s "$AUDIO_RESTORATION_CACHE/envs/separator/bin/python" workers/separator_worker.py \
+            --model-id denoise_normal \
+            --input "$RUNNER_TEMP/input.wav" \
+            --output-dir "$RUNNER_TEMP/normal-output" \
+            --settings-json '{"quality":"balanced","segment":256}'
+          test -s "$RUNNER_TEMP/normal-output/manifest.json"
+          echo "denoise_normal: настоящий инференс готов"
