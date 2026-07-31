@@ -15,12 +15,12 @@ def main() -> None:
         "Тяжёлая диффузионная дорисовка с помощью AudioSR.",
         {"audiosr_large"},
     )
+    import audiosr.pipeline as audiosr_pipeline
     import librosa
     import numpy as np
     import soundfile as sf
     import torch
     from audiosr import build_model
-    import audiosr.pipeline as audiosr_pipeline
 
     original_lowpass = audiosr_pipeline.lowpass_filtering_prepare_inference
 
