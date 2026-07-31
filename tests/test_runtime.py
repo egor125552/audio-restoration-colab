@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from audio_restoration_colab.runtime import (
+    JOB_LOG_ENV,
     ModelResult,
     RuntimeLayout,
     SubprocessWorker,
@@ -88,9 +89,11 @@ class RuntimeTests(unittest.TestCase):
             output.mkdir()
             source.write_bytes(b"input")
             calls: list[list[str]] = []
+            environments: list[dict[str, str]] = []
 
-            def fake_run(command: list[str], _environment: dict[str, str]) -> None:
+            def fake_run(command: list[str], environment: dict[str, str]) -> None:
                 calls.append(command)
+                environments.append(environment)
                 if command[0].endswith("python"):
                     result = output / "restored.wav"
                     result.write_bytes(b"audio")
@@ -127,6 +130,10 @@ class RuntimeTests(unittest.TestCase):
                     "flashsr",
                     str(cache),
                 ],
+            )
+            self.assertEqual(
+                environments[0][JOB_LOG_ENV],
+                str(root / "model.log"),
             )
             self.assertEqual(results[0].role, "restored")
             self.assertIn("Запускаю", messages[-1])
