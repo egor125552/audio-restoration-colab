@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 import time
 from pathlib import Path
@@ -19,6 +20,50 @@ def _replace_module(root, dotted_name: str, new_module) -> None:
     for part in parts[:-1]:
         parent = getattr(parent, part)
     setattr(parent, parts[-1], new_module)
+
+
+def _run_once(*, model, source: Path, seed: int, steps: int, guidance: float, torch):
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats(0)
+    torch.cuda.synchronize()
+    started = time.perf_counter()
+    from audiosr import super_resolution
+
+    with torch.inference_mode():
+        generated = super_resolution(
+            model,
+            str(source),
+            seed=seed,
+            ddim_steps=steps,
+            guidance_scale=guidance,
+        )
+    torch.cuda.synchronize()
+    elapsed = time.perf_counter() - started
+    peak = torch.cuda.max_memory_allocated(0) / (1024**3)
+    return generated, elapsed, peak
+
+
+def _snr_db(reference, candidate, np) -> float:
+    reference = np.asarray(reference).squeeze().astype(np.float64)
+    candidate = np.asarray(candidate).squeeze().astype(np.float64)
+    length = min(reference.size, candidate.size)
+    if length == 0:
+        return float("nan")
+    reference = reference[:length]
+    candidate = candidate[:length]
+    signal_power = float(np.sum(reference * reference))
+    error = reference - candidate
+    error_power = float(np.sum(error * error))
+    if error_power == 0.0:
+        return float("inf")
+    if signal_power == 0.0:
+        return float("-inf")
+    return 10.0 * math.log10(signal_power / error_power)
+
+
+def _save_audio(value, target: Path, *, np, sf) -> None:
+    audio = np.asarray(value).squeeze().astype(np.float32)
+    sf.write(str(target), audio, 48_000)
 
 
 def main() -> int:
@@ -40,8 +85,8 @@ def main() -> int:
         type=int,
         default=2,
         help=(
-            "Первый запуск включает компиляцию, второй показывает "
-            "установившуюся скорость."
+            "Число TensorRT-запусков. Первый включает компиляцию; "
+            "последующие показывают установившуюся скорость."
         ),
     )
     args = parser.parse_args()
@@ -51,8 +96,8 @@ def main() -> int:
         parser.error(f"Файл не найден: {source}")
     if args.steps < 1:
         parser.error("--steps должен быть больше нуля")
-    if args.runs < 1:
-        parser.error("--runs должен быть больше нуля")
+    if args.runs < 2:
+        parser.error("--runs должен быть не меньше 2")
 
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -60,8 +105,8 @@ def main() -> int:
     import numpy as np
     import soundfile as sf
     import torch
-    import torch_tensorrt  # noqa: F401
-    from audiosr import build_model, super_resolution
+    import torch_tensorrt
+    from audiosr import build_model
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA недоступна. Нужен Colab с GPU.")
@@ -78,6 +123,8 @@ def main() -> int:
 
     print(f"Загружаю AudioSR ({args.mode}) на CUDA…", flush=True)
     model = build_model(model_name=args.mode, device="cuda")
+    model.eval()
+
     module_name, diffusion_module = _find_diffusion_module(model)
     param_count = sum(
         parameter.numel() for parameter in diffusion_module.parameters()
@@ -88,70 +135,88 @@ def main() -> int:
         flush=True,
     )
 
+    print("Сначала измеряю обычный PyTorch с теми же параметрами…", flush=True)
+    baseline, baseline_time, baseline_peak = _run_once(
+        model=model,
+        source=source,
+        seed=args.seed,
+        steps=args.steps,
+        guidance=args.guidance,
+        torch=torch,
+    )
+    baseline_path = output_dir / "baseline-pytorch.wav"
+    _save_audio(baseline, baseline_path, np=np, sf=sf)
+    print(
+        f"PyTorch: {baseline_time:.2f} с, peak VRAM {baseline_peak:.2f} ГБ",
+        flush=True,
+    )
+    print(f"Базовый результат: {baseline_path}", flush=True)
+
     print("Подключаю torch.compile backend=\"torch_tensorrt\"…", flush=True)
     compiled_diffusion = torch.compile(
         diffusion_module,
         backend="torch_tensorrt",
         dynamic=False,
         options={
-            "precision": torch.float16,
+            "enabled_precisions": {torch.float32, torch.float16},
             "min_block_size": 3,
             "optimization_level": 4,
             "truncate_long_and_double": True,
+            "use_python_runtime": False,
         },
     )
     _replace_module(model, module_name, compiled_diffusion)
 
     print(
-        "Первый запуск может быть заметно медленнее: TensorRT профилирует "
-        "и собирает engine.",
+        "Первый TensorRT-запуск может быть заметно медленнее: профилируется "
+        "граф и собираются engine-блоки.",
         flush=True,
     )
 
     timings: list[float] = []
+    final_generated = None
     for run_index in range(args.runs):
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats(0)
-        torch.cuda.synchronize()
-        started = time.perf_counter()
-        with torch.inference_mode(), torch.autocast(
-            device_type="cuda", dtype=torch.float16
-        ):
-            generated = super_resolution(
-                model,
-                str(source),
-                seed=args.seed,
-                ddim_steps=args.steps,
-                guidance_scale=args.guidance,
-            )
-        torch.cuda.synchronize()
-        elapsed = time.perf_counter() - started
+        generated, elapsed, peak = _run_once(
+            model=model,
+            source=source,
+            seed=args.seed,
+            steps=args.steps,
+            guidance=args.guidance,
+            torch=torch,
+        )
+        final_generated = generated
         timings.append(elapsed)
 
-        audio = np.asarray(generated).squeeze().astype(np.float32)
         target = output_dir / f"tensorrt-run-{run_index + 1}.wav"
-        sf.write(str(target), audio, 48_000)
-        peak = torch.cuda.max_memory_allocated(0) / (1024**3)
+        _save_audio(generated, target, np=np, sf=sf)
         label = "компиляция + инференс" if run_index == 0 else "готовый engine"
         print(
-            f"Запуск {run_index + 1}: {elapsed:.2f} с ({label}), "
+            f"TensorRT {run_index + 1}: {elapsed:.2f} с ({label}), "
             f"peak VRAM {peak:.2f} ГБ",
             flush=True,
         )
         print(f"Результат: {target}", flush=True)
 
-    if len(timings) >= 2:
-        speedup = timings[0] / timings[-1] if timings[-1] else float("inf")
+    steady_time = timings[-1]
+    speedup = baseline_time / steady_time if steady_time else float("inf")
+    print(
+        f"Честное сравнение: PyTorch {baseline_time:.2f} с -> "
+        f"TensorRT {steady_time:.2f} с = {speedup:.2f}x.",
+        flush=True,
+    )
+
+    if final_generated is not None:
+        quality_snr = _snr_db(baseline, final_generated, np)
         print(
-            f"Первый/последний запуск: {timings[0]:.2f} / "
-            f"{timings[-1]:.2f} с. Отношение: {speedup:.2f}x.",
+            f"SNR TensorRT относительно обычного PyTorch: {quality_snr:.2f} dB",
             flush=True,
         )
-        print(
-            "Для честного сравнения с обычной AudioSR сравни второй запуск "
-            "с тем же файлом, seed, guidance и количеством шагов.",
-            flush=True,
-        )
+        if quality_snr < 30.0:
+            print(
+                "Предупреждение: отличие от базового результата заметное; "
+                "ускоренный режим пока не стоит встраивать в основной интерфейс.",
+                flush=True,
+            )
 
     return 0
 
