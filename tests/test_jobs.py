@@ -16,6 +16,7 @@ from audio_restoration_colab.runtime import ModelResult
 class FakeWorker:
     def __init__(self) -> None:
         self.received_settings: dict[str, object] | None = None
+        self.received_source: Path | None = None
 
     def run(
         self,
@@ -27,6 +28,7 @@ class FakeWorker:
         progress: JobProgress,
     ) -> list[ModelResult]:
         self.received_settings = settings
+        self.received_source = source
         clean = output_dir / "worker-clean.wav"
         noise = output_dir / "worker-noise.wav"
         clean.write_bytes(b"clean")
@@ -93,17 +95,55 @@ class JobTests(unittest.TestCase):
                 worker.received_settings,
                 {"quality": "maximum", "segment": 352},
             )
+            self.assertIsNotNone(worker.received_source)
+            assert worker.received_source is not None
+            self.assertEqual(worker.received_source.suffix, ".wav")
+            self.assertEqual(worker.received_source.name, "model-input.wav")
             self.assertEqual(len(result.files), 2)
             self.assertTrue(all(path.suffix == ".mp3" for path in result.files))
             self.assertTrue(result.archive.is_file())
             self.assertTrue(result.log_path.is_file())
-            self.assertEqual(result.primary_preview, result.files[0])
-            self.assertEqual(result.secondary_preview, result.files[1])
+            self.assertEqual(result.primary_preview.suffix, ".wav")
+            self.assertEqual(result.secondary_preview.suffix, ".wav")
+            self.assertNotEqual(result.primary_preview, result.files[0])
             self.assertIn("Готово", messages[-1])
             self.assertIn(
                 "обработка завершена успешно",
                 result.log_path.read_text(encoding="utf-8"),
             )
+
+    def test_m4a_is_decoded_to_wav_and_download_can_stay_m4a(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "phone call.m4a"
+            source.write_bytes(b"m4a-container")
+            worker = FakeWorker()
+            commands: list[list[str]] = []
+
+            def tracking_ffmpeg(command: list[str]) -> None:
+                commands.append(command)
+                fake_ffmpeg(command)
+
+            service = AudioJobService(
+                jobs_root=root / "jobs",
+                worker=worker,
+                ffmpeg_runner=tracking_ffmpeg,
+            )
+            result = service.process(
+                source=source,
+                model_id="flashsr_medium",
+                format_choice="source",
+                raw_settings={"lowpass": True},
+                progress=lambda _fraction, _message: None,
+            )
+
+            self.assertIsNotNone(worker.received_source)
+            assert worker.received_source is not None
+            self.assertEqual(worker.received_source.suffix, ".wav")
+            self.assertEqual(Path(commands[0][-1]).suffix, ".wav")
+            self.assertTrue(all(path.suffix == ".m4a" for path in result.files))
+            self.assertEqual(result.primary_preview.suffix, ".wav")
+            self.assertEqual(result.secondary_preview.suffix, ".wav")
 
     def test_failed_job_keeps_downloadable_log(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

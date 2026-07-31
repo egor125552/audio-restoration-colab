@@ -96,10 +96,12 @@ class AudioJobService:
         settings = normalize_settings(model_id, raw_settings)
         self.cleanup_old_jobs()
         job_dir = self._new_job_dir()
+        input_dir = job_dir / "input"
         raw_dir = job_dir / "raw"
         formatted_dir = job_dir / "results"
         log_path = job_dir / "model.log"
-        raw_dir.mkdir(parents=True)
+        input_dir.mkdir(parents=True)
+        raw_dir.mkdir()
         formatted_dir.mkdir()
         log_path.write_text(
             (
@@ -111,10 +113,16 @@ class AudioJobService:
         )
 
         try:
+            progress(0.02, "Декодирую аудио в WAV для модели…")
+            model_input = input_dir / "model-input.wav"
+            self.ffmpeg_runner(build_ffmpeg_command(source, model_input))
+            if not model_input.is_file():
+                raise ValueError("Не удалось подготовить WAV для выбранной модели.")
+
             progress(0.05, "Подготавливаю выбранную модель…")
             raw_results = self.worker.run(
                 model_id=model_id,
-                source=source,
+                source=model_input,
                 output_dir=raw_dir,
                 settings=settings,
                 progress=progress,
@@ -151,8 +159,12 @@ class AudioJobService:
             return JobResult(
                 files=files,
                 archive=archive,
-                primary_preview=files[0] if files else None,
-                secondary_preview=files[1] if len(files) > 1 else None,
+                primary_preview=(
+                    raw_results[0].path if raw_results else None
+                ),
+                secondary_preview=(
+                    raw_results[1].path if len(raw_results) > 1 else None
+                ),
                 message=(
                     f"Готово: создано файлов — {len(files)}. "
                     "Ниже можно скачать каждый файл или общий ZIP."
