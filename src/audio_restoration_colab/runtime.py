@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +32,7 @@ BACKEND_LAYOUT = {
     "audiosr": ("audiosr", "audiosr_worker.py"),
 }
 
+JOB_LOG_ENV = "AUDIO_RESTORATION_JOB_LOG"
 CommandRunner = Callable[[list[str], dict[str, str]], None]
 
 
@@ -54,10 +57,16 @@ class SubprocessWorker:
         progress: Callable[[float, str], None],
     ) -> list[ModelResult]:
         model = get_model(model_id)
+        log_path = output_dir.parent / "model.log"
         environment = {
             "AUDIO_RESTORATION_CACHE": str(self.layout.cache_root),
             "PYTHONUNBUFFERED": "1",
+            JOB_LOG_ENV: str(log_path),
         }
+        print(
+            f"[audio-restoration] {model.short_title}: лог запуска — {log_path}",
+            flush=True,
+        )
         if model.backend not in self._prepared_backends:
             progress(
                 0.10,
@@ -145,19 +154,63 @@ def read_worker_manifest(job_dir: Path) -> list[ModelResult]:
 
 
 def _run_command(command: list[str], environment: dict[str, str]) -> None:
+    log_value = environment.get(JOB_LOG_ENV)
+    log_path = Path(log_value) if log_value else None
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    header = f"\n$ {shlex.join(command)}\n"
+    print(header, end="", flush=True)
+    tail: deque[str] = deque(maxlen=80)
+
+    log_file = (
+        log_path.open("a", encoding="utf-8")
+        if log_path is not None
+        else None
+    )
     try:
-        subprocess.run(
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-            env={**os.environ, **environment},
-        )
-    except FileNotFoundError as error:
-        raise ValueError(
-            "Не найден файл, необходимый для запуска выбранной модели."
-        ) from error
-    except subprocess.CalledProcessError as error:
-        detail_lines = (error.stderr or error.stdout or "").strip().splitlines()
-        detail = detail_lines[-1] if detail_lines else "неизвестная ошибка"
-        raise ValueError(f"Модель завершилась с ошибкой: {detail}") from error
+        if log_file is not None:
+            log_file.write(header)
+            log_file.flush()
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env={**os.environ, **environment},
+            )
+        except FileNotFoundError as error:
+            raise ValueError(
+                "Не найден файл, необходимый для запуска выбранной модели."
+            ) from error
+
+        assert process.stdout is not None
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            if log_file is not None:
+                log_file.write(line)
+                log_file.flush()
+            stripped = line.strip()
+            if stripped:
+                tail.append(stripped)
+
+        return_code = process.wait()
+        footer = f"\n[код завершения: {return_code}]\n"
+        print(footer, end="", flush=True)
+        if log_file is not None:
+            log_file.write(footer)
+            log_file.flush()
+        if return_code != 0:
+            if return_code < 0:
+                detail = (
+                    f"процесс остановлен сигналом {-return_code} "
+                    f"(код {return_code})"
+                )
+            else:
+                detail = tail[-1] if tail else f"код завершения {return_code}"
+            raise ValueError(f"Модель завершилась с ошибкой: {detail}")
+    finally:
+        if log_file is not None:
+            log_file.close()
