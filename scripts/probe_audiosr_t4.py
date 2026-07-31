@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import argparse
 import math
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
+
+PROBE_SECONDS = 5.12
 
 
 def _find_diffusion_module(model):
@@ -20,6 +24,65 @@ def _replace_module(root, dotted_name: str, new_module) -> None:
     for part in parts[:-1]:
         parent = getattr(parent, part)
     setattr(parent, parts[-1], new_module)
+
+
+def _prepare_probe_input(source: Path, output_dir: Path) -> Path:
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise RuntimeError("ffmpeg не найден в системе.")
+
+    target = output_dir / "probe-input.wav"
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(source),
+        "-t",
+        str(PROBE_SECONDS),
+        "-ac",
+        "1",
+        "-ar",
+        "48000",
+        "-c:a",
+        "pcm_s24le",
+        str(target),
+    ]
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0 or not target.is_file():
+        details = completed.stderr.strip() or "ffmpeg не создал WAV."
+        raise RuntimeError(f"Не удалось подготовить WAV для теста: {details}")
+    print(
+        f"Тестовый вход: первые {PROBE_SECONDS:.2f} с -> {target}",
+        flush=True,
+    )
+    return target
+
+
+def _install_lowpass_guard(audiosr_pipeline) -> None:
+    original_lowpass = audiosr_pipeline.lowpass_filtering_prepare_inference
+
+    def safe_lowpass(batch):
+        try:
+            return original_lowpass(batch)
+        except ValueError as error:
+            if "critical frequencies" not in str(error):
+                raise
+            print(
+                "AudioSR lowpass не смог определить корректный срез; "
+                "использую исходную waveform как безопасный fallback.",
+                flush=True,
+            )
+            return {"waveform_lowpass": batch["waveform"].clone()}
+
+    audiosr_pipeline.lowpass_filtering_prepare_inference = safe_lowpass
 
 
 def _run_once(*, model, source: Path, seed: int, steps: int, guidance: float, torch):
@@ -73,7 +136,7 @@ def main() -> int:
     parser.add_argument(
         "--input",
         required=True,
-        help="Путь к короткому WAV/MP3/M4A",
+        help="Путь к WAV, MP3, M4A или другому аудиофайлу, который читает FFmpeg",
     )
     parser.add_argument("--output-dir", default="/tmp/audiosr-t4-probe")
     parser.add_argument("--mode", choices=("basic", "speech"), default="basic")
@@ -101,12 +164,16 @@ def main() -> int:
 
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    probe_source = _prepare_probe_input(source, output_dir)
 
+    import audiosr.pipeline as audiosr_pipeline
     import numpy as np
     import soundfile as sf
     import torch
     import torch_tensorrt
     from audiosr import build_model
+
+    _install_lowpass_guard(audiosr_pipeline)
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA недоступна. Нужен Colab с GPU.")
@@ -138,7 +205,7 @@ def main() -> int:
     print("Сначала измеряю обычный PyTorch с теми же параметрами…", flush=True)
     baseline, baseline_time, baseline_peak = _run_once(
         model=model,
-        source=source,
+        source=probe_source,
         seed=args.seed,
         steps=args.steps,
         guidance=args.guidance,
@@ -178,7 +245,7 @@ def main() -> int:
     for run_index in range(args.runs):
         generated, elapsed, peak = _run_once(
             model=model,
-            source=source,
+            source=probe_source,
             seed=args.seed,
             steps=args.steps,
             guidance=args.guidance,
