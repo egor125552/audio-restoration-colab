@@ -26,9 +26,10 @@ jobs:
       - name: Получить код
         uses: actions/checkout@v7.0.1
 
-      - name: Включить uv без многогигабайтного cache
+      - name: Включить тот же uv, что использует Colab-блокнот
         uses: astral-sh/setup-uv@v9.0.0
         with:
+          version: "0.12.0"
           enable-cache: false
 
       - name: Установить тот же стек, что будет в Colab
