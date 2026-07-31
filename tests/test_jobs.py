@@ -6,6 +6,7 @@ from pathlib import Path
 
 from audio_restoration_colab.jobs import (
     AudioJobService,
+    JobProcessingError,
     JobProgress,
     validate_source,
 )
@@ -34,6 +35,20 @@ class FakeWorker:
             ModelResult(role="clean", path=clean),
             ModelResult(role="noise", path=noise),
         ]
+
+
+class FailingWorker:
+    def run(
+        self,
+        *,
+        model_id: str,
+        source: Path,
+        output_dir: Path,
+        settings: dict[str, object],
+        progress: JobProgress,
+    ) -> list[ModelResult]:
+        del model_id, source, output_dir, settings, progress
+        raise ValueError("CUDA out of memory")
 
 
 def fake_ffmpeg(command: list[str]) -> None:
@@ -81,9 +96,40 @@ class JobTests(unittest.TestCase):
             self.assertEqual(len(result.files), 2)
             self.assertTrue(all(path.suffix == ".mp3" for path in result.files))
             self.assertTrue(result.archive.is_file())
+            self.assertTrue(result.log_path.is_file())
             self.assertEqual(result.primary_preview, result.files[0])
             self.assertEqual(result.secondary_preview, result.files[1])
             self.assertIn("Готово", messages[-1])
+            self.assertIn(
+                "обработка завершена успешно",
+                result.log_path.read_text(encoding="utf-8"),
+            )
+
+    def test_failed_job_keeps_downloadable_log(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "speech.wav"
+            source.write_bytes(b"input")
+            service = AudioJobService(
+                jobs_root=root / "jobs",
+                worker=FailingWorker(),
+                ffmpeg_runner=fake_ffmpeg,
+            )
+
+            with self.assertRaises(JobProcessingError) as context:
+                service.process(
+                    source=source,
+                    model_id="flashsr_medium",
+                    format_choice="wav",
+                    raw_settings={"lowpass": True},
+                    progress=lambda _fraction, _message: None,
+                )
+
+            error = context.exception
+            self.assertTrue(error.log_path.is_file())
+            log_text = error.log_path.read_text(encoding="utf-8")
+            self.assertIn("flashsr_medium", log_text)
+            self.assertIn("CUDA out of memory", log_text)
 
     def test_cleanup_removes_only_old_job_directories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
