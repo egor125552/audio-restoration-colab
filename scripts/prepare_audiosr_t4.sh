@@ -3,7 +3,7 @@ set -euo pipefail
 
 CACHE_ROOT="${1:-/content/audio-restoration-models}"
 ENV_DIR="$CACHE_ROOT/envs/audiosr_trt"
-READY_MARKER="$ENV_DIR/.audio-restoration-ready-v3"
+READY_MARKER="$ENV_DIR/.audio-restoration-ready-v4"
 STACK_CHECK_ONLY="${AUDIO_RESTORATION_T4_STACK_CHECK:-0}"
 
 if command -v nvidia-smi >/dev/null 2>&1; then
@@ -36,8 +36,10 @@ fi
 rm -rf "$ENV_DIR"
 mkdir -p "$(dirname "$ENV_DIR")"
 
-"$UV_BIN" python install 3.10
-"$UV_BIN" venv --python 3.10 "$ENV_DIR"
+# Пинним patch-версию Python, чтобы GitHub Actions и Colab не разъехались,
+# когда uv начнёт считать другой Python 3.10 самым свежим.
+"$UV_BIN" python install 3.10.20
+"$UV_BIN" venv --python 3.10.20 "$ENV_DIR"
 
 "$UV_BIN" pip install \
   --python "$ENV_DIR/bin/python" \
