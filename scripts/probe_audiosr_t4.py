@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+# Hosted Colab sets an interactive matplotlib backend in the parent notebook.
+# This probe runs inside a separate venv that does not necessarily contain
+# Colab's matplotlib-inline package. AudioSR imports pyplot while building the
+# model, so force the same headless backend used by the main worker runtime.
+os.environ["MPLBACKEND"] = "Agg"
 
 PROBE_SECONDS = 5.12
 
