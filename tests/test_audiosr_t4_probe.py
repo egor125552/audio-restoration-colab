@@ -64,7 +64,8 @@ class AudioSrT4ProbeTests(unittest.TestCase):
         self.assertEqual(options["enabled_precisions"], {"fp32", "fp16"})
         self.assertEqual(options["min_block_size"], 3)
         self.assertEqual(options["optimization_level"], 4)
-        self.assertTrue(options["truncate_long_and_double"])
+        self.assertTrue(options["truncate_double"])
+        self.assertNotIn("truncate_long_and_double", options)
         self.assertFalse(options["use_python_runtime"])
         self.assertTrue(options["pass_through_build_failures"])
 
