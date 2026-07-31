@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import os
 import subprocess
 import sys
 import tempfile
@@ -36,6 +37,9 @@ class AudioSrT4ProbeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.probe = _load_probe_module()
+
+    def test_probe_forces_headless_matplotlib_backend(self) -> None:
+        self.assertEqual(os.environ.get("MPLBACKEND"), "Agg")
 
     def test_find_and_replace_diffusion_module(self) -> None:
         root = _FakeNamedModuleRoot()
