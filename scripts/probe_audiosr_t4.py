@@ -25,7 +25,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Проверка ускорения AudioSR через Torch-TensorRT на NVIDIA T4."
     )
-    parser.add_argument("--input", required=True, help="Путь к короткому WAV/MP3/M4A")
+    parser.add_argument(
+        "--input",
+        required=True,
+        help="Путь к короткому WAV/MP3/M4A",
+    )
     parser.add_argument("--output-dir", default="/tmp/audiosr-t4-probe")
     parser.add_argument("--mode", choices=("basic", "speech"), default="basic")
     parser.add_argument("--steps", type=int, default=30)
@@ -35,7 +39,10 @@ def main() -> int:
         "--runs",
         type=int,
         default=2,
-        help="Первый запуск включает компиляцию, второй показывает установившуюся скорость.",
+        help=(
+            "Первый запуск включает компиляцию, второй показывает "
+            "установившуюся скорость."
+        ),
     )
     args = parser.parse_args()
 
@@ -72,9 +79,12 @@ def main() -> int:
     print(f"Загружаю AudioSR ({args.mode}) на CUDA…", flush=True)
     model = build_model(model_name=args.mode, device="cuda")
     module_name, diffusion_module = _find_diffusion_module(model)
-    param_count = sum(parameter.numel() for parameter in diffusion_module.parameters())
+    param_count = sum(
+        parameter.numel() for parameter in diffusion_module.parameters()
+    )
     print(
-        f"Найден тяжёлый блок: {module_name}, {param_count / 1_000_000:.1f} млн параметров",
+        "Найден тяжёлый блок: "
+        f"{module_name}, {param_count / 1_000_000:.1f} млн параметров",
         flush=True,
     )
 
@@ -93,7 +103,8 @@ def main() -> int:
     _replace_module(model, module_name, compiled_diffusion)
 
     print(
-        "Первый запуск может быть заметно медленнее: TensorRT профилирует и собирает engine.",
+        "Первый запуск может быть заметно медленнее: TensorRT профилирует "
+        "и собирает engine.",
         flush=True,
     )
 
@@ -123,7 +134,8 @@ def main() -> int:
         peak = torch.cuda.max_memory_allocated(0) / (1024**3)
         label = "компиляция + инференс" if run_index == 0 else "готовый engine"
         print(
-            f"Запуск {run_index + 1}: {elapsed:.2f} с ({label}), peak VRAM {peak:.2f} ГБ",
+            f"Запуск {run_index + 1}: {elapsed:.2f} с ({label}), "
+            f"peak VRAM {peak:.2f} ГБ",
             flush=True,
         )
         print(f"Результат: {target}", flush=True)
@@ -131,13 +143,13 @@ def main() -> int:
     if len(timings) >= 2:
         speedup = timings[0] / timings[-1] if timings[-1] else float("inf")
         print(
-            f"Первый/последний запуск: {timings[0]:.2f} / {timings[-1]:.2f} с. "
-            f"Отношение: {speedup:.2f}x.",
+            f"Первый/последний запуск: {timings[0]:.2f} / "
+            f"{timings[-1]:.2f} с. Отношение: {speedup:.2f}x.",
             flush=True,
         )
         print(
-            "Для честного сравнения с обычной AudioSR сравни второй запуск с тем же файлом, "
-            "seed, guidance и количеством шагов.",
+            "Для честного сравнения с обычной AudioSR сравни второй запуск "
+            "с тем же файлом, seed, guidance и количеством шагов.",
             flush=True,
         )
 
@@ -148,5 +160,8 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as error:  # noqa: BLE001
-        print(f"T4 TensorRT probe failed: {type(error).__name__}: {error}", file=sys.stderr)
+        print(
+            f"T4 TensorRT probe failed: {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
         raise
