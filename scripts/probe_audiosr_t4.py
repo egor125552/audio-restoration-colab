@@ -218,7 +218,16 @@ def main() -> int:
         flush=True,
     )
 
-    print("1/3: измеряю текущий PyTorch без изменений…", flush=True)
+    print("1/3: прогреваю текущий PyTorch…", flush=True)
+    _run_once(
+        model=model,
+        source=probe_source,
+        seed=args.seed,
+        steps=args.steps,
+        guidance=args.guidance,
+        torch=torch,
+    )
+    print("1/3: измеряю прогретый текущий PyTorch…", flush=True)
     baseline, baseline_time, baseline_peak = _run_once(
         model=model,
         source=probe_source,
@@ -235,7 +244,16 @@ def main() -> int:
     )
 
     _disable_training_checkpointing()
-    print("2/3: измеряю PyTorch без training checkpoint wrapper…", flush=True)
+    print("2/3: прогреваю PyTorch без training checkpoint wrapper…", flush=True)
+    _run_once(
+        model=model,
+        source=probe_source,
+        seed=args.seed,
+        steps=args.steps,
+        guidance=args.guidance,
+        torch=torch,
+    )
+    print("2/3: измеряю прогретый inference-clean PyTorch…", flush=True)
     clean_baseline, clean_time, clean_peak = _run_once(
         model=model,
         source=probe_source,
