@@ -1,0 +1,41 @@
+name: Проверка стека AudioSR TensorRT
+
+on:
+  pull_request:
+    paths:
+      - "scripts/prepare_audiosr_t4.sh"
+      - "scripts/probe_audiosr_t4.py"
+      - ".github/workflows/t4-stack-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stack:
+    name: Установка и импорты без GPU
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Получить код
+        uses: actions/checkout@v7.0.1
+
+      - name: Включить uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Установить тот же стек, что будет в Colab
+        env:
+          AUDIO_RESTORATION_T4_STACK_CHECK: "1"
+        run: bash scripts/prepare_audiosr_t4.sh /tmp/audio-restoration-t4-stack
+
+      - name: Проверить CLI probe без запуска GPU
+        run: |
+          /tmp/audio-restoration-t4-stack/envs/audiosr_trt/bin/python \
+            scripts/probe_audiosr_t4.py --help
+
+      - name: Проверить синтаксис обоих скриптов
+        run: |
+          bash -n scripts/prepare_audiosr_t4.sh
+          python -m py_compile scripts/probe_audiosr_t4.py
