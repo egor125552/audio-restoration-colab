@@ -85,6 +85,22 @@ def _install_lowpass_guard(audiosr_pipeline) -> None:
     audiosr_pipeline.lowpass_filtering_prepare_inference = safe_lowpass
 
 
+def _disable_training_checkpointing() -> None:
+    import audiosr.latent_diffusion.modules.attention as attention
+    import audiosr.latent_diffusion.modules.diffusionmodules.openaimodel as openaimodel
+
+    def inference_checkpoint(func, inputs, _params, _flag):
+        return func(*inputs)
+
+    attention.checkpoint = inference_checkpoint
+    openaimodel.checkpoint = inference_checkpoint
+    print(
+        "Inference-only: отключён training gradient checkpoint wrapper "
+        "в UNet/attention для чистого графа TensorRT.",
+        flush=True,
+    )
+
+
 def _run_once(*, model, source: Path, seed: int, steps: int, guidance: float, torch):
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats(0)
@@ -202,7 +218,7 @@ def main() -> int:
         flush=True,
     )
 
-    print("Сначала измеряю обычный PyTorch с теми же параметрами…", flush=True)
+    print("1/3: измеряю текущий PyTorch без изменений…", flush=True)
     baseline, baseline_time, baseline_peak = _run_once(
         model=model,
         source=probe_source,
@@ -214,12 +230,36 @@ def main() -> int:
     baseline_path = output_dir / "baseline-pytorch.wav"
     _save_audio(baseline, baseline_path, np=np, sf=sf)
     print(
-        f"PyTorch: {baseline_time:.2f} с, peak VRAM {baseline_peak:.2f} ГБ",
+        f"PyTorch current: {baseline_time:.2f} с, peak VRAM {baseline_peak:.2f} ГБ",
         flush=True,
     )
-    print(f"Базовый результат: {baseline_path}", flush=True)
 
-    print("Подключаю torch.compile backend=\"torch_tensorrt\"…", flush=True)
+    _disable_training_checkpointing()
+    print("2/3: измеряю PyTorch без training checkpoint wrapper…", flush=True)
+    clean_baseline, clean_time, clean_peak = _run_once(
+        model=model,
+        source=probe_source,
+        seed=args.seed,
+        steps=args.steps,
+        guidance=args.guidance,
+        torch=torch,
+    )
+    clean_path = output_dir / "baseline-pytorch-inference-clean.wav"
+    _save_audio(clean_baseline, clean_path, np=np, sf=sf)
+    checkpoint_speedup = baseline_time / clean_time if clean_time else float("inf")
+    checkpoint_snr = _snr_db(baseline, clean_baseline, np)
+    print(
+        f"PyTorch clean: {clean_time:.2f} с, peak VRAM {clean_peak:.2f} ГБ, "
+        f"ускорение {checkpoint_speedup:.2f}x, SNR {checkpoint_snr:.2f} dB",
+        flush=True,
+    )
+    if checkpoint_snr < 60.0:
+        raise RuntimeError(
+            "Отключение training checkpoint wrapper изменило результат сильнее "
+            "ожидаемого; TensorRT-тест остановлен."
+        )
+
+    print("3/3: подключаю torch.compile backend=\"torch_tensorrt\"…", flush=True)
     compiled_diffusion = torch.compile(
         diffusion_module,
         backend="torch_tensorrt",
@@ -265,17 +305,23 @@ def main() -> int:
         print(f"Результат: {target}", flush=True)
 
     steady_time = timings[-1]
-    speedup = baseline_time / steady_time if steady_time else float("inf")
+    speedup_current = baseline_time / steady_time if steady_time else float("inf")
+    speedup_clean = clean_time / steady_time if steady_time else float("inf")
     print(
-        f"Честное сравнение: PyTorch {baseline_time:.2f} с -> "
-        f"TensorRT {steady_time:.2f} с = {speedup:.2f}x.",
+        f"Итог: current PyTorch {baseline_time:.2f} с -> TensorRT "
+        f"{steady_time:.2f} с = {speedup_current:.2f}x.",
+        flush=True,
+    )
+    print(
+        f"Чистый эффект TensorRT против inference-clean PyTorch: "
+        f"{speedup_clean:.2f}x.",
         flush=True,
     )
 
     if final_generated is not None:
         quality_snr = _snr_db(baseline, final_generated, np)
         print(
-            f"SNR TensorRT относительно обычного PyTorch: {quality_snr:.2f} dB",
+            f"SNR TensorRT относительно текущего PyTorch: {quality_snr:.2f} dB",
             flush=True,
         )
         if quality_snr < 30.0:
