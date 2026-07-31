@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from common import model_cache_root, parse_worker_args, write_manifest
+from common import model_cache_root, parse_worker_args, report_progress, write_manifest
 
 MODEL_FILES = {
     "denoise_normal": "denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt",
@@ -19,10 +19,12 @@ def main() -> None:
         "Очистка аудио с помощью Mel-Band RoFormer.",
         set(MODEL_FILES),
     )
+    report_progress(0.03, "DeNoise: загружаю библиотеки…")
     from audio_separator.separator import Separator
 
     overlap = QUALITY_OVERLAP.get(str(settings.get("quality")), 8)
     segment = int(settings.get("segment", 256))
+    report_progress(0.08, "DeNoise: создаю модель…")
     separator = Separator(
         output_dir=str(arguments.output_dir),
         model_file_dir=str(model_cache_root() / "weights" / "separator"),
@@ -35,8 +37,14 @@ def main() -> None:
             "overlap": overlap,
         },
     )
+    report_progress(0.14, "DeNoise: загружаю веса модели…")
     separator.load_model(model_filename=MODEL_FILES[arguments.model_id])
     process_input = _pad_short_input(arguments.input, arguments.output_dir)
+    report_progress(
+        0.22,
+        "DeNoise: разделяю чистый звук и шум —",
+        tqdm_span=0.68,
+    )
     raw_paths = separator.separate(str(process_input))
     if not raw_paths:
         raw_paths = [
@@ -44,6 +52,7 @@ def main() -> None:
             for path in arguments.output_dir.glob("*.wav")
             if path != process_input
         ]
+    report_progress(0.92, "DeNoise: подготавливаю результаты…")
     paths = [_resolve_output(arguments.output_dir, item) for item in raw_paths]
     if not paths:
         raise RuntimeError("Модель DeNoise не вернула результат.")
@@ -58,6 +67,7 @@ def main() -> None:
         arguments.output_dir,
         [("clean", clean), ("noise", noise)],
     )
+    report_progress(1.0, "DeNoise: готово.")
 
 
 def _pad_short_input(source: Path, output_dir: Path) -> Path:

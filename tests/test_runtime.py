@@ -97,10 +97,17 @@ class RuntimeTests(unittest.TestCase):
             calls: list[list[str]] = []
             environments: list[dict[str, str]] = []
 
-            def fake_run(command: list[str], environment: dict[str, str]) -> None:
+            def fake_run(command, environment, line_handler=None) -> None:
                 calls.append(command)
                 environments.append(environment)
                 if command[0].endswith("python"):
+                    if line_handler is not None:
+                        line_handler(
+                            "@@AUDIO_RESTORATION_PROGRESS@@"
+                            '{"fraction":0.2,"message":"Фрагмент 1 из 2 —",'
+                            '"tqdm_span":0.3}\n'
+                        )
+                        line_handler("DDIM Sampler: 50%|█████| 25/50\n")
                     result = output / "restored.wav"
                     result.write_bytes(b"audio")
                     (output / "manifest.json").write_text(
@@ -114,7 +121,7 @@ class RuntimeTests(unittest.TestCase):
                         encoding="utf-8",
                     )
 
-            messages: list[str] = []
+            progress_events: list[tuple[float, str]] = []
             worker = SubprocessWorker(
                 layout=RuntimeLayout(project_root=project, cache_root=cache),
                 command_runner=fake_run,
@@ -125,7 +132,9 @@ class RuntimeTests(unittest.TestCase):
                 source=source,
                 output_dir=output,
                 settings={"lowpass": True},
-                progress=lambda _fraction, message: messages.append(message),
+                progress=lambda fraction, message: progress_events.append(
+                    (fraction, message)
+                ),
             )
 
             self.assertEqual(len(calls), 2)
@@ -144,7 +153,10 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(environments[0][PROJECT_ROOT_ENV], str(project))
             self.assertEqual(environments[0]["MPLBACKEND"], "Agg")
             self.assertEqual(results[0].role, "restored")
-            self.assertIn("Запускаю", messages[-1])
+            self.assertTrue(any("50%" in message for _, message in progress_events))
+            fractions = [fraction for fraction, _ in progress_events]
+            self.assertEqual(fractions, sorted(fractions))
+            self.assertGreater(fractions[-1], 0.28)
 
     def test_worker_recovers_project_root_from_current_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -164,7 +176,8 @@ class RuntimeTests(unittest.TestCase):
             source.write_bytes(b"input")
             calls: list[list[str]] = []
 
-            def fake_run(command: list[str], environment: dict[str, str]) -> None:
+            def fake_run(command, environment, line_handler=None) -> None:
+                del environment, line_handler
                 calls.append(command)
                 if command[0].endswith("python"):
                     result = output / "restored.wav"

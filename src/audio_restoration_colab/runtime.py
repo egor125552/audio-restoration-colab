@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 from collections import deque
@@ -34,7 +35,54 @@ BACKEND_LAYOUT = {
 
 JOB_LOG_ENV = "AUDIO_RESTORATION_JOB_LOG"
 PROJECT_ROOT_ENV = "AUDIO_RESTORATION_PROJECT_ROOT"
-CommandRunner = Callable[[list[str], dict[str, str]], None]
+PROGRESS_PREFIX = "@@AUDIO_RESTORATION_PROGRESS@@"
+TQDM_PERCENT = re.compile(r"(?<!\d)(100|[1-9]?\d)%\|")
+LineHandler = Callable[[str], None]
+CommandRunner = Callable[[list[str], dict[str, str], LineHandler | None], None]
+
+
+class _WorkerProgressParser:
+    def __init__(self, progress: Callable[[float, str], None]) -> None:
+        self.progress = progress
+        self.local_base = 0.0
+        self.tqdm_span = 0.0
+        self.message = "Модель обрабатывает аудио…"
+        self.last_overall = 0.28
+
+    def feed(self, text: str) -> None:
+        for fragment in text.replace("\r", "\n").splitlines():
+            stripped = fragment.strip()
+            if not stripped:
+                continue
+            if stripped.startswith(PROGRESS_PREFIX):
+                self._structured(stripped[len(PROGRESS_PREFIX) :])
+                continue
+            match = TQDM_PERCENT.search(stripped)
+            if match is not None and self.tqdm_span > 0:
+                percent = int(match.group(1))
+                local = self.local_base + self.tqdm_span * (percent / 100.0)
+                self._emit(local, f"{self.message} {percent}%")
+
+    def _structured(self, raw_payload: str) -> None:
+        try:
+            payload = json.loads(raw_payload)
+            fraction = float(payload["fraction"])
+            message = str(payload["message"])
+            tqdm_span = float(payload.get("tqdm_span", 0.0))
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return
+        self.local_base = max(0.0, min(1.0, fraction))
+        self.tqdm_span = max(0.0, min(1.0 - self.local_base, tqdm_span))
+        self.message = message
+        self._emit(self.local_base, message)
+
+    def _emit(self, local_fraction: float, message: str) -> None:
+        local = max(0.0, min(1.0, local_fraction))
+        overall = 0.28 + 0.48 * local
+        if overall + 1e-9 < self.last_overall:
+            return
+        self.last_overall = overall
+        self.progress(overall, message)
 
 
 class SubprocessWorker:
@@ -89,7 +137,7 @@ class SubprocessWorker:
                 model.backend,
                 str(self.layout.cache_root),
             ]
-            self.command_runner(prepare_command, environment)
+            self.command_runner(prepare_command, environment, None)
             self._prepared_backends.add(model.backend)
 
         progress(0.28, f"Запускаю: {model.short_title}…")
@@ -100,7 +148,8 @@ class SubprocessWorker:
             output_dir=output_dir,
             settings=settings,
         )
-        self.command_runner(command, environment)
+        parser = _WorkerProgressParser(progress)
+        self.command_runner(command, environment, parser.feed)
         return read_worker_manifest(output_dir)
 
 
@@ -186,7 +235,11 @@ def _resolve_project_root(configured_root: Path) -> Path:
     )
 
 
-def _run_command(command: list[str], environment: dict[str, str]) -> None:
+def _run_command(
+    command: list[str],
+    environment: dict[str, str],
+    line_handler: LineHandler | None = None,
+) -> None:
     log_value = environment.get(JOB_LOG_ENV)
     log_path = Path(log_value) if log_value else None
     if log_path is not None:
@@ -225,6 +278,8 @@ def _run_command(command: list[str], environment: dict[str, str]) -> None:
             if log_file is not None:
                 log_file.write(line)
                 log_file.flush()
+            if line_handler is not None:
+                line_handler(line)
             stripped = line.strip()
             if stripped:
                 tail.append(stripped)
