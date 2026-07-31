@@ -68,6 +68,7 @@ class SubprocessWorker:
             "AUDIO_RESTORATION_CACHE": str(self.layout.cache_root),
             PROJECT_ROOT_ENV: str(project_root),
             "PYTHONUNBUFFERED": "1",
+            "MPLBACKEND": "Agg",
             JOB_LOG_ENV: str(log_path),
         }
         print(
