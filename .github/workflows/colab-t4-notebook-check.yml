@@ -35,6 +35,7 @@ jobs:
           python - <<'PY'
           import platform
           import sys
+
           import torch
 
           print("Python:", sys.version)
@@ -73,9 +74,41 @@ jobs:
           ]
           missing = [item for item in required if item not in source]
           if missing:
-              raise SystemExit("В блокноте не найдены обязательные части: " + ", ".join(missing))
+              raise SystemExit(
+                  "В блокноте не найдены обязательные части: " + ", ".join(missing)
+              )
           print("Блокнот валиден и содержит все обязательные шаги.")
           PY
+
+      - name: Скомпилировать код всех ячеек внутри Colab image
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          from google.colab import files  # noqa: F401
+          from IPython.display import Audio, display  # noqa: F401
+
+          path = Path("notebooks/audiosr_t4_colab_probe.ipynb")
+          notebook = json.loads(path.read_text(encoding="utf-8"))
+          compiled = 0
+          for index, cell in enumerate(notebook.get("cells", []), start=1):
+              if cell.get("cell_type") != "code":
+                  continue
+              source = "".join(cell.get("source", []))
+              compile(source, f"{path}:cell-{index}", "exec")
+              compiled += 1
+          print(
+              f"Python-код всех {compiled} code-ячеек компилируется; "
+              "Colab/IPython импорты доступны."
+          )
+          PY
+
+      - name: Проверить экспериментальную ветку блокнота
+        run: |
+          git ls-remote --exit-code \
+            https://github.com/egor125552/audio-restoration-colab.git \
+            refs/heads/agent/audiosr-t4-tensorrt >/dev/null
 
       - name: Установить uv внутри официального Colab image
         run: python -m pip install --disable-pip-version-check -q "uv==0.12.0"
