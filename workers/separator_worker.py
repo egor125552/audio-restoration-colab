@@ -36,7 +36,14 @@ def main() -> None:
         },
     )
     separator.load_model(model_filename=MODEL_FILES[arguments.model_id])
-    raw_paths = separator.separate(str(arguments.input))
+    process_input = _pad_short_input(arguments.input, arguments.output_dir)
+    raw_paths = separator.separate(str(process_input))
+    if not raw_paths:
+        raw_paths = [
+            str(path)
+            for path in arguments.output_dir.glob("*.wav")
+            if path != process_input
+        ]
     paths = [_resolve_output(arguments.output_dir, item) for item in raw_paths]
     if not paths:
         raise RuntimeError("Модель DeNoise не вернула результат.")
@@ -45,10 +52,36 @@ def main() -> None:
         noise = _create_noise_delta(arguments.input, clean, arguments.output_dir)
     else:
         clean, noise = _identify_denoise_outputs(paths)
+    clean = _trim_to_source(clean, arguments.input)
+    noise = _trim_to_source(noise, arguments.input)
     write_manifest(
         arguments.output_dir,
         [("clean", clean), ("noise", noise)],
     )
+
+
+def _pad_short_input(source: Path, output_dir: Path) -> Path:
+    import numpy as np
+    import soundfile as sf
+
+    audio, rate = sf.read(str(source), dtype="float32", always_2d=True)
+    minimum = int(rate * 3.0)
+    if len(audio) >= minimum:
+        return source
+    padded = np.pad(audio, ((0, minimum - len(audio)), (0, 0)))
+    target = output_dir / "padded-input.wav"
+    sf.write(str(target), padded, rate)
+    return target
+
+
+def _trim_to_source(result: Path, source: Path) -> Path:
+    import soundfile as sf
+
+    source_info = sf.info(str(source))
+    audio, rate = sf.read(str(result), dtype="float32", always_2d=True)
+    target_length = round(source_info.frames * rate / source_info.samplerate)
+    sf.write(str(result), audio[:target_length], rate)
+    return result
 
 
 def _create_noise_delta(source: Path, clean: Path, output_dir: Path) -> Path:

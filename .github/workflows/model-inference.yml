@@ -2,6 +2,11 @@ name: Настоящий инференс моделей
 
 on:
   workflow_dispatch:
+    inputs:
+      models:
+        description: JSON-список моделей
+        required: true
+        default: '["denoise_normal","denoise_aggressive","lavasr_small","flashsr_medium","audiosr_large"]'
 
 permissions:
   contents: read
@@ -14,12 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        model:
-          - denoise_normal
-          - denoise_aggressive
-          - lavasr_small
-          - flashsr_medium
-          - audiosr_large
+        model: ${{ fromJSON(inputs.models) }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.0.0
