@@ -123,33 +123,23 @@ def _tensorrt_options(torch):
     }
 
 
-def _representative_diffusion_inputs(*, mode: str, module, torch):
-    from audiosr.utils import default_audioldm_config
+def _capture_diffusion_inputs_once(module):
+    captured = {}
 
-    config = default_audioldm_config(mode)
-    model_params = config["model"]["params"]
-    unet_params = model_params["unet_config"]["params"]
-    latent_t = int(model_params["latent_t_size"])
-    latent_f = int(model_params["latent_f_size"])
-    in_channels = int(unet_params["in_channels"])
+    def capture(_module, args, kwargs):
+        if captured:
+            return
+        x = args[0] if args else kwargs.get("x")
+        timesteps = args[1] if len(args) > 1 else kwargs.get("timesteps")
+        if x is None or timesteps is None:
+            raise RuntimeError(
+                "Не удалось получить x и timesteps из реального вызова AudioSR UNet."
+            )
+        captured["x"] = x.detach().clone()
+        captured["timesteps"] = timesteps.detach().clone()
 
-    try:
-        parameter = next(module.parameters())
-    except StopIteration as error:
-        raise RuntimeError("AudioSR diffusion_model не содержит параметров.") from error
-
-    # AudioSR runs conditional and unconditional guidance as two separate
-    # UNet calls. Each real diffusion call therefore has batch size 1.
-    x = torch.randn(
-        1,
-        in_channels,
-        latent_t,
-        latent_f,
-        device=parameter.device,
-        dtype=parameter.dtype,
-    )
-    timesteps = torch.tensor([999], device=parameter.device, dtype=torch.long)
-    return x, timesteps
+    handle = module.register_forward_pre_hook(capture, with_kwargs=True)
+    return captured, handle
 
 
 def _make_export_diffusion_adapter(*, diffusion_module, torch):
@@ -170,7 +160,13 @@ def _make_export_diffusion_adapter(*, diffusion_module, torch):
     return ExportDiffusionAdapter()
 
 
-def _make_aot_diffusion_adapter(*, compiled_module, torch):
+def _make_aot_diffusion_adapter(
+    *,
+    compiled_module,
+    expected_x_shape,
+    expected_timesteps_shape,
+    torch,
+):
     class AotDiffusionAdapter(torch.nn.Module):
         def __init__(self):
             super().__init__()
@@ -187,6 +183,17 @@ def _make_aot_diffusion_adapter(*, compiled_module, torch):
         ):
             if timesteps is None:
                 raise RuntimeError("TensorRT diffusion adapter получил timesteps=None.")
+            if tuple(x.shape) != expected_x_shape:
+                raise RuntimeError(
+                    "TensorRT UNet скомпилирован для x="
+                    f"{expected_x_shape}, но AudioSR передала {tuple(x.shape)}."
+                )
+            if tuple(timesteps.shape) != expected_timesteps_shape:
+                raise RuntimeError(
+                    "TensorRT UNet скомпилирован для timesteps="
+                    f"{expected_timesteps_shape}, но AudioSR передала "
+                    f"{tuple(timesteps.shape)}."
+                )
             if y is not None:
                 raise RuntimeError("TensorRT probe не поддерживает conditioning y.")
             if context_list:
@@ -206,15 +213,11 @@ def _make_aot_diffusion_adapter(*, compiled_module, torch):
 def _compile_diffusion_aot(
     *,
     diffusion_module,
-    mode: str,
+    example_x,
+    example_timesteps,
     torch,
     torch_tensorrt,
 ):
-    example_x, example_timesteps = _representative_diffusion_inputs(
-        mode=mode,
-        module=diffusion_module,
-        torch=torch,
-    )
     export_module = _make_export_diffusion_adapter(
         diffusion_module=diffusion_module,
         torch=torch,
@@ -222,7 +225,8 @@ def _compile_diffusion_aot(
 
     print(
         "3/3: заранее экспортирую единый AudioSR UNet-граф "
-        f"для input={list(example_x.shape)}…",
+        f"для x={list(example_x.shape)}, "
+        f"timesteps={list(example_timesteps.shape)}…",
         flush=True,
     )
     started = time.perf_counter()
@@ -285,6 +289,8 @@ def _compile_diffusion_aot(
 
     return _make_aot_diffusion_adapter(
         compiled_module=compiled_module,
+        expected_x_shape=tuple(example_x.shape),
+        expected_timesteps_shape=tuple(example_timesteps.shape),
         torch=torch,
     ), compile_time, compile_peak, node_count
 
@@ -429,15 +435,30 @@ def main() -> int:
     )
 
     _disable_training_checkpointing()
+    captured_inputs, capture_handle = _capture_diffusion_inputs_once(diffusion_module)
     print("2/3: прогреваю PyTorch без training checkpoint wrapper…", flush=True)
-    _run_once(
-        model=model,
-        source=probe_source,
-        seed=args.seed,
-        steps=args.steps,
-        guidance=args.guidance,
-        torch=torch,
+    try:
+        _run_once(
+            model=model,
+            source=probe_source,
+            seed=args.seed,
+            steps=args.steps,
+            guidance=args.guidance,
+            torch=torch,
+        )
+    finally:
+        capture_handle.remove()
+    if "x" not in captured_inputs or "timesteps" not in captured_inputs:
+        raise RuntimeError("PyTorch-прогон не вызвал AudioSR diffusion_model.")
+    example_x = captured_inputs["x"]
+    example_timesteps = captured_inputs["timesteps"]
+    print(
+        "Реальный AudioSR UNet-вход: "
+        f"x={list(example_x.shape)}, "
+        f"timesteps={list(example_timesteps.shape)}.",
+        flush=True,
     )
+
     print("2/3: измеряю прогретый inference-clean PyTorch…", flush=True)
     clean_baseline, clean_time, clean_peak = _run_once(
         model=model,
@@ -464,7 +485,8 @@ def main() -> int:
 
     compiled_diffusion, compile_time, compile_peak, node_count = _compile_diffusion_aot(
         diffusion_module=diffusion_module,
-        mode=args.mode,
+        example_x=example_x,
+        example_timesteps=example_timesteps,
         torch=torch,
         torch_tensorrt=torch_tensorrt,
     )
