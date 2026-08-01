@@ -111,12 +111,168 @@ def _disable_training_checkpointing() -> None:
 def _tensorrt_options(torch):
     return {
         "enabled_precisions": {torch.float32, torch.float16},
-        "min_block_size": 3,
-        "optimization_level": 4,
+        # Tiny TensorRT fragments cost more to launch than they save. The previous
+        # JIT probe generated hundreds of engines with min_block_size=3.
+        "min_block_size": 5,
+        "optimization_level": 3,
         "truncate_double": True,
         "use_python_runtime": False,
         "pass_through_build_failures": True,
+        # Tesla T4 has no TF32 support; disabling it avoids repeated warnings.
+        "disable_tf32": True,
     }
+
+
+def _representative_diffusion_inputs(*, mode: str, module, torch):
+    from audiosr.utils import default_audioldm_config
+
+    config = default_audioldm_config(mode)
+    model_params = config["model"]["params"]
+    unet_params = model_params["unet_config"]["params"]
+    latent_t = int(model_params["latent_t_size"])
+    latent_f = int(model_params["latent_f_size"])
+    in_channels = int(unet_params["in_channels"])
+
+    try:
+        parameter = next(module.parameters())
+    except StopIteration as error:
+        raise RuntimeError("AudioSR diffusion_model не содержит параметров.") from error
+
+    x = torch.randn(
+        2,
+        in_channels,
+        latent_t,
+        latent_f,
+        device=parameter.device,
+        dtype=parameter.dtype,
+    )
+    timesteps = torch.tensor([999, 500], device=parameter.device, dtype=torch.long)
+    return x, timesteps
+
+
+def _make_aot_diffusion_adapter(*, compiled_module, torch):
+    class AotDiffusionAdapter(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.compiled_module = compiled_module
+
+        def forward(
+            self,
+            x,
+            timesteps=None,
+            y=None,
+            context_list=None,
+            context_attn_mask_list=None,
+            **kwargs,
+        ):
+            if timesteps is None:
+                raise RuntimeError("TensorRT diffusion adapter получил timesteps=None.")
+            if y is not None:
+                raise RuntimeError("TensorRT probe не поддерживает class conditioning y.")
+            if context_list:
+                raise RuntimeError("TensorRT probe не поддерживает cross-attention context.")
+            if context_attn_mask_list:
+                raise RuntimeError("TensorRT probe не поддерживает attention mask context.")
+            if kwargs:
+                raise RuntimeError(
+                    "TensorRT diffusion adapter получил неожиданные аргументы: "
+                    + ", ".join(sorted(kwargs))
+                )
+            return self.compiled_module(x, timesteps)
+
+    return AotDiffusionAdapter()
+
+
+def _compile_diffusion_aot(
+    *,
+    diffusion_module,
+    mode: str,
+    torch,
+    torch_tensorrt,
+):
+    example_x, example_timesteps = _representative_diffusion_inputs(
+        mode=mode,
+        module=diffusion_module,
+        torch=torch,
+    )
+    export_kwargs = {
+        "y": None,
+        "context_list": [],
+        "context_attn_mask_list": [],
+    }
+
+    print(
+        "3/3: заранее экспортирую единый AudioSR UNet-граф "
+        f"для input={list(example_x.shape)}…",
+        flush=True,
+    )
+    started = time.perf_counter()
+    with torch.inference_mode():
+        exported = torch.export.export(
+            diffusion_module,
+            (example_x, example_timesteps),
+            kwargs=export_kwargs,
+            strict=False,
+        )
+    node_count = sum(1 for _ in exported.graph.nodes)
+    export_time = time.perf_counter() - started
+    print(
+        f"torch.export: {node_count} узлов за {export_time:.2f} с.",
+        flush=True,
+    )
+
+    print(
+        "3/3: AOT-компиляция экспортированного графа через "
+        "torch_tensorrt.dynamo.compile…",
+        flush=True,
+    )
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats(0)
+    torch.cuda.synchronize()
+    started = time.perf_counter()
+    compiled_module = torch_tensorrt.dynamo.compile(
+        exported,
+        inputs=[example_x, example_timesteps],
+        device=torch.device("cuda:0"),
+        **_tensorrt_options(torch),
+    )
+    torch.cuda.synchronize()
+    compile_time = time.perf_counter() - started
+    compile_peak = torch.cuda.max_memory_allocated(0) / (1024**3)
+    print(
+        f"AOT TensorRT готов: {compile_time:.2f} с, "
+        f"peak VRAM {compile_peak:.2f} ГБ.",
+        flush=True,
+    )
+
+    # Verify the compiled graph once before putting it into the full sampler.
+    with torch.inference_mode():
+        reference = diffusion_module(
+            example_x,
+            example_timesteps,
+            **export_kwargs,
+        )
+        candidate = compiled_module(example_x, example_timesteps)
+    if reference.shape != candidate.shape:
+        raise RuntimeError(
+            "TensorRT UNet вернул другую форму: "
+            f"PyTorch={tuple(reference.shape)}, TensorRT={tuple(candidate.shape)}."
+        )
+    if not torch.isfinite(candidate).all():
+        raise RuntimeError("TensorRT UNet вернул NaN или Inf.")
+
+    difference = (reference.float() - candidate.float()).abs()
+    print(
+        "Проверка одного UNet-вызова: "
+        f"mean abs {difference.mean().item():.6f}, "
+        f"max abs {difference.max().item():.6f}.",
+        flush=True,
+    )
+
+    return _make_aot_diffusion_adapter(
+        compiled_module=compiled_module,
+        torch=torch,
+    ), compile_time, compile_peak, node_count
 
 
 def _run_once(*, model, source: Path, seed: int, steps: int, guidance: float, torch):
@@ -181,10 +337,7 @@ def main() -> int:
         "--runs",
         type=int,
         default=2,
-        help=(
-            "Число TensorRT-запусков. Первый включает компиляцию; "
-            "последующие показывают установившуюся скорость."
-        ),
+        help="Число измеряемых запусков уже готового AOT TensorRT-графа.",
     )
     args = parser.parse_args()
 
@@ -295,24 +448,22 @@ def main() -> int:
             "ожидаемого; TensorRT-тест остановлен."
         )
 
-    print("3/3: подключаю torch.compile backend=\"torch_tensorrt\"…", flush=True)
-    compiled_diffusion = torch.compile(
-        diffusion_module,
-        backend="torch_tensorrt",
-        dynamic=False,
-        options=_tensorrt_options(torch),
+    compiled_diffusion, compile_time, compile_peak, node_count = _compile_diffusion_aot(
+        diffusion_module=diffusion_module,
+        mode=args.mode,
+        torch=torch,
+        torch_tensorrt=torch_tensorrt,
     )
     _replace_module(model, module_name, compiled_diffusion)
-
-    print(
-        "Первый TensorRT-запуск может быть заметно медленнее: профилируется "
-        "граф и собираются engine-блоки.",
-        flush=True,
-    )
 
     timings: list[float] = []
     final_generated = None
     for run_index in range(args.runs):
+        print(
+            f"TensorRT inference {run_index + 1}/{args.runs}: "
+            "граф уже полностью скомпилирован.",
+            flush=True,
+        )
         generated, elapsed, peak = _run_once(
             model=model,
             source=probe_source,
@@ -326,9 +477,8 @@ def main() -> int:
 
         target = output_dir / f"tensorrt-run-{run_index + 1}.wav"
         _save_audio(generated, target, np=np, sf=sf)
-        label = "компиляция + инференс" if run_index == 0 else "готовый engine"
         print(
-            f"TensorRT {run_index + 1}: {elapsed:.2f} с ({label}), "
+            f"TensorRT {run_index + 1}: {elapsed:.2f} с, "
             f"peak VRAM {peak:.2f} ГБ",
             flush=True,
         )
@@ -337,6 +487,11 @@ def main() -> int:
     steady_time = timings[-1]
     speedup_current = baseline_time / steady_time if steady_time else float("inf")
     speedup_clean = clean_time / steady_time if steady_time else float("inf")
+    print(
+        f"AOT compile: {compile_time:.2f} с, {node_count} узлов, "
+        f"peak VRAM {compile_peak:.2f} ГБ.",
+        flush=True,
+    )
     print(
         f"Итог: current PyTorch {baseline_time:.2f} с -> TensorRT "
         f"{steady_time:.2f} с = {speedup_current:.2f}x.",
