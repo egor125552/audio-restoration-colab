@@ -17,7 +17,7 @@ permissions:
 
 concurrency:
   group: stem-colab-900ms-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   inference:
