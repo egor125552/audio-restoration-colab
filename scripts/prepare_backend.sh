@@ -24,7 +24,7 @@ fi
 ENV_ROOT="$CACHE_ROOT/envs"
 REPO_ROOT="$CACHE_ROOT/repos"
 ENV_DIR="$ENV_ROOT/$BACKEND"
-READY_MARKER="$ENV_DIR/.audio-restoration-ready-v2"
+READY_MARKER="$ENV_DIR/.audio-restoration-ready-v3"
 mkdir -p "$ENV_ROOT" "$REPO_ROOT"
 
 if [[ -f "$READY_MARKER" ]]; then
@@ -45,6 +45,32 @@ install_python_tools() {
     "setuptools==80.9.0"
 }
 
+verify_top_separator_models() {
+  local model_list="$ENV_DIR/top-separator-models.json"
+  echo "Проверяю наличие топовых RoFormer-моделей…"
+  "$ENV_DIR/bin/audio-separator" \
+    --list_models \
+    --list_format=json > "$model_list"
+
+  local required_models=(
+    "BS-Rofo-SW-Fixed.ckpt"
+    "mel_band_roformer_4stems_large_ver1.ckpt"
+    "becruily_guitar.ckpt"
+    "deverb_bs_roformer_8_384dim_10depth.ckpt"
+  )
+  local missing=0
+  for model in "${required_models[@]}"; do
+    if ! grep -Fq "$model" "$model_list"; then
+      echo "В реестре audio-separator отсутствует: $model" >&2
+      missing=1
+    fi
+  done
+  if [[ "$missing" -ne 0 ]]; then
+    echo "Установленная версия не содержит обязательный топ-набор RoFormer." >&2
+    exit 4
+  fi
+}
+
 case "$BACKEND" in
   separator)
     "$UV_BIN" python install 3.10
@@ -53,8 +79,8 @@ case "$BACKEND" in
     install_torch_241
     "$UV_BIN" pip install \
       --python "$ENV_DIR/bin/python" \
-      "audio-separator[gpu]==0.44.5" \
-      "demucs-infer[community]==4.2.2"
+      "audio-separator[gpu]==0.44.5"
+    verify_top_separator_models
     ;;
   lavasr)
     "$UV_BIN" python install 3.10
