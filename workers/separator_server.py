@@ -25,6 +25,7 @@ from audio_restoration_colab.catalog import get_model  # noqa: E402
 READY_PREFIX = "@@AUDIO_RESTORATION_SERVER_READY@@"
 RESULT_PREFIX = "@@AUDIO_RESTORATION_SERVER_RESULT@@"
 BSINFER_PREFIX = "bsinfer:"
+MINIMUM_SAFE_SECONDS = 12.0
 
 
 class SeparatorSession:
@@ -68,6 +69,7 @@ class SeparatorSession:
                 source=source,
                 output_dir=output_dir,
                 expected_roles=model.output_roles,
+                original_duration=duration,
             )
 
         write_manifest(
@@ -201,6 +203,7 @@ class SeparatorSession:
         overlap: int,
         use_autocast: bool,
     ):
+        _patch_audio_separator_nested_roformer_detection()
         from audio_separator.separator import Separator
 
         model = get_model(model_id)
@@ -251,22 +254,29 @@ class SeparatorSession:
         source: Path,
         output_dir: Path,
         expected_roles: tuple[str, ...],
+        original_duration: float,
     ) -> dict[str, Path]:
         report_progress(
             0.24,
             "Разделитель: анализирую песню —",
             tqdm_span=0.68,
         )
-        paths = self._run_engine(
-            engine=engine,
+        with _safe_short_source(
             source=source,
-            output_dir=output_dir,
-        )
-        return _canonicalize_outputs(
+            original_duration=original_duration,
+        ) as inference_source:
+            paths = self._run_engine(
+                engine=engine,
+                source=inference_source,
+                output_dir=output_dir,
+            )
+        mapped = _canonicalize_outputs(
             paths=paths,
             output_dir=output_dir,
             expected_roles=expected_roles,
         )
+        _trim_results(mapped, original_duration)
+        return mapped
 
     def _separate_long(
         self,
@@ -305,16 +315,22 @@ class SeparatorSession:
                 )
                 chunk_output = temp_root / f"result-{index:04d}"
                 chunk_output.mkdir()
-                paths = self._run_engine(
-                    engine=engine,
+                chunk_duration = _probe_duration(chunk)
+                with _safe_short_source(
                     source=chunk,
-                    output_dir=chunk_output,
-                )
+                    original_duration=chunk_duration,
+                ) as inference_chunk:
+                    paths = self._run_engine(
+                        engine=engine,
+                        source=inference_chunk,
+                        output_dir=chunk_output,
+                    )
                 mapped = _canonicalize_outputs(
                     paths=paths,
                     output_dir=chunk_output,
                     expected_roles=expected_roles,
                 )
+                _trim_results(mapped, chunk_duration)
                 for role in expected_roles:
                     by_role[role].append(mapped[role])
 
@@ -347,6 +363,33 @@ class SeparatorSession:
         model_instance = getattr(engine, "model_instance", None)
         if model_instance is not None and hasattr(model_instance, "output_dir"):
             model_instance.output_dir = str(output_dir)
+
+
+def _patch_audio_separator_nested_roformer_detection() -> None:
+    from audio_separator.separator.roformer.configuration_normalizer import (
+        ConfigurationNormalizer,
+    )
+
+    if getattr(ConfigurationNormalizer, "_audio_restoration_nested_patch", False):
+        return
+
+    original = ConfigurationNormalizer.detect_model_type
+
+    def detect_model_type(self, config):
+        detected = original(self, config)
+        if detected is not None:
+            return detected
+        if isinstance(config, dict):
+            for key in ("model", "architecture", "params"):
+                nested = config.get(key)
+                if isinstance(nested, dict):
+                    detected = original(self, nested)
+                    if detected is not None:
+                        return detected
+        return None
+
+    ConfigurationNormalizer.detect_model_type = detect_model_type
+    ConfigurationNormalizer._audio_restoration_nested_patch = True
 
 
 def _resolve_paths(output_dir: Path, raw_paths: Any) -> list[Path]:
@@ -453,6 +496,83 @@ def _matches_role(
     if role == "instrumental" and "other" in name:
         return "other" not in expected_roles
     return any(alias in name for alias in aliases.get(role, (role,)))
+
+
+@contextlib.contextmanager
+def _safe_short_source(*, source: Path, original_duration: float):
+    if original_duration <= 0 or original_duration >= MINIMUM_SAFE_SECONDS:
+        yield source
+        return
+
+    report_progress(
+        0.23,
+        "Разделитель: временно дополняю короткий файл для устойчивого инференса…",
+    )
+    with tempfile.TemporaryDirectory(prefix="stem-short-input-") as directory:
+        padded = Path(directory) / "padded-input.wav"
+        completed = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(source),
+                "-af",
+                "apad",
+                "-t",
+                f"{MINIMUM_SAFE_SECONDS:.3f}",
+                "-c:a",
+                "pcm_f32le",
+                str(padded),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0 or not padded.is_file():
+            raise ValueError(
+                completed.stderr.strip()
+                or "Не удалось дополнить короткий аудиофайл."
+            )
+        yield padded
+
+
+def _trim_results(results: dict[str, Path], duration: float) -> None:
+    if duration <= 0:
+        return
+    for path in results.values():
+        _trim_audio(path, duration)
+
+
+def _trim_audio(path: Path, duration: float) -> None:
+    temporary = path.with_name(f"{path.stem}.trimmed.wav")
+    completed = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(path),
+            "-t",
+            f"{duration:.9f}",
+            "-c:a",
+            "pcm_f32le",
+            str(temporary),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0 or not temporary.is_file():
+        temporary.unlink(missing_ok=True)
+        raise ValueError(
+            completed.stderr.strip() or f"Не удалось обрезать {path.name}."
+        )
+    temporary.replace(path)
 
 
 def _probe_duration(source: Path) -> float:
