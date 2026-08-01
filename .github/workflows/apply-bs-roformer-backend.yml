@@ -1,0 +1,116 @@
+name: Применить backend BS-RoFormer
+
+on:
+  push:
+    branches:
+      - agent/stem-separator-mixer
+    paths:
+      - ".github/workflows/apply-bs-roformer-backend.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: agent/stem-separator-mixer
+          fetch-depth: 0
+
+      - name: Перевести сервер на проверяемый BS-RoFormer backend
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("workers/separator_server.py")
+          text = path.read_text(encoding="utf-8")
+
+          old = 'RESULT_PREFIX = "@@AUDIO_RESTORATION_SERVER_RESULT@@"\n'
+          new = old + 'BSINFER_PREFIX = "bsinfer:"\n'
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''        engine_kind = (
+              "demucs"
+              if (model.model_filename or "").startswith("demucs:")
+              else "audio_separator"
+          )'''
+          new = '''        filename = model.model_filename or ""
+          engine_kind = (
+              "bs_roformer"
+              if filename.startswith(BSINFER_PREFIX)
+              else "audio_separator"
+          )'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          old = '''        if engine_kind == "demucs":
+              engine = self._load_demucs(model.model_filename or "")
+          else:'''
+          new = '''        if engine_kind == "bs_roformer":
+              engine = self._load_bs_roformer(filename)
+          else:'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          start = text.index("    def _load_demucs(")
+          end = text.index("    def _load_audio_separator(", start)
+          replacement = '''    def _load_bs_roformer(self, model_filename: str):
+              from bs_roformer_adapter import BSRoformerEngine
+
+              model_slug = model_filename.removeprefix(BSINFER_PREFIX)
+              if not model_slug:
+                  raise ValueError("Для BS-RoFormer не задан slug модели.")
+              cache_root = Path(
+                  os.environ.get(
+                      "AUDIO_RESTORATION_CACHE",
+                      "/content/audio-restoration-models",
+                  )
+              )
+              cache_dir = cache_root / "weights" / "bs-roformer-infer"
+              report_progress(
+                  0.12,
+                  "Разделитель: загружаю BS-RoFormer с проверкой SHA-256; "
+                  "скачивание требуется только один раз…",
+              )
+              return BSRoformerEngine(
+                  model_slug=model_slug,
+                  cache_dir=cache_dir,
+              )
+
+'''
+          text = text[:start] + replacement + text[end:]
+
+          old = '''        if self.engine_kind == "demucs":
+              return _run_demucs(
+                  session=engine,
+                  source=source,
+                  output_dir=output_dir,
+              )
+          self._set_output_dir(engine, output_dir)'''
+          new = '''        if self.engine_kind == "bs_roformer":
+              return engine.separate(source, output_dir)
+          self._set_output_dir(engine, output_dir)'''
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          start = text.index("\ndef _run_demucs(")
+          end = text.index("\ndef _resolve_paths(", start)
+          text = text[:start] + text[end:]
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+          python -m py_compile workers/separator_server.py workers/bs_roformer_adapter.py
+
+      - name: Удалить временный workflow и сохранить исходники
+        run: |
+          rm .github/workflows/apply-bs-roformer-backend.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add workers/separator_server.py workers/bs_roformer_adapter.py \
+            .github/workflows/apply-bs-roformer-backend.yml
+          git commit -m "Use registry-backed BS-RoFormer inference"
+          git push origin agent/stem-separator-mixer
