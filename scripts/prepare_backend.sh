@@ -24,7 +24,7 @@ fi
 ENV_ROOT="$CACHE_ROOT/envs"
 REPO_ROOT="$CACHE_ROOT/repos"
 ENV_DIR="$ENV_ROOT/$BACKEND"
-READY_MARKER="$ENV_DIR/.audio-restoration-ready-v4"
+READY_MARKER="$ENV_DIR/.audio-restoration-ready-v5"
 mkdir -p "$ENV_ROOT" "$REPO_ROOT"
 
 if [[ -f "$READY_MARKER" ]]; then
@@ -118,7 +118,7 @@ case "$BACKEND" in
     "$UV_BIN" pip install \
       --python "$ENV_DIR/bin/python" \
       "audio-separator[gpu]==0.44.5" \
-      "bs-roformer-infer==0.1.5"
+      "git+https://github.com/openmirlab/bs-roformer-infer.git@de35ada5817b878da0194ee2860253dda3a9c2b2"
     verify_top_separator_models
     ;;
   lavasr)
