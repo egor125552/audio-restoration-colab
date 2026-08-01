@@ -24,7 +24,7 @@ fi
 ENV_ROOT="$CACHE_ROOT/envs"
 REPO_ROOT="$CACHE_ROOT/repos"
 ENV_DIR="$ENV_ROOT/$BACKEND"
-READY_MARKER="$ENV_DIR/.audio-restoration-ready-v3"
+READY_MARKER="$ENV_DIR/.audio-restoration-ready-v4"
 mkdir -p "$ENV_ROOT" "$REPO_ROOT"
 
 if [[ -f "$READY_MARKER" ]]; then
@@ -46,17 +46,31 @@ install_python_tools() {
 }
 
 verify_top_separator_models() {
-  local model_list="$ENV_DIR/top-separator-models.json"
-  echo "Проверяю наличие топовых RoFormer-моделей…"
+  local model_list="$ENV_DIR/audio-separator-models.json"
+  local preset_list="$ENV_DIR/audio-separator-presets.txt"
+  echo "Проверяю Mel-Band модели и ансамбли audio-separator…"
   "$ENV_DIR/bin/audio-separator" \
     --list_models \
     --list_format=json > "$model_list"
+  "$ENV_DIR/bin/audio-separator" --list_presets > "$preset_list"
 
   local required_models=(
-    "BS-Rofo-SW-Fixed.ckpt"
-    "mel_band_roformer_4stems_large_ver1.ckpt"
-    "becruily_guitar.ckpt"
-    "deverb_bs_roformer_8_384dim_10depth.ckpt"
+    "denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt"
+    "denoise_mel_band_roformer_aufr33_aggr_sdr_27.9768.ckpt"
+    "melband_roformer_guitar_becruily.ckpt"
+    "dereverb_big_mbr_ep_362.ckpt"
+    "dereverb_super_big_mbr_ep_346.ckpt"
+    "dereverb-echo_mel_band_roformer_sdr_13.4843_v2.ckpt"
+    "dereverb_echo_mbr_fused.ckpt"
+    "mel_band_roformer_bleed_suppressor_v1.ckpt"
+    "aspiration_mel_band_roformer_less_aggr_sdr_18.1201.ckpt"
+  )
+  local required_presets=(
+    "vocal_balanced"
+    "vocal_clean"
+    "instrumental_clean"
+    "instrumental_full"
+    "karaoke"
   )
   local missing=0
   for model in "${required_models[@]}"; do
@@ -65,10 +79,35 @@ verify_top_separator_models() {
       missing=1
     fi
   done
+  for preset in "${required_presets[@]}"; do
+    if ! grep -Fq "$preset" "$preset_list"; then
+      echo "В audio-separator отсутствует preset: $preset" >&2
+      missing=1
+    fi
+  done
   if [[ "$missing" -ne 0 ]]; then
-    echo "Установленная версия не содержит обязательный топ-набор RoFormer." >&2
+    echo "Каталог интерфейса не совпадает с установленным audio-separator." >&2
     exit 4
   fi
+
+  echo "Проверяю versioned registry BS-RoFormer…"
+  "$ENV_DIR/bin/python" - <<'PY'
+from bs_roformer import MODEL_REGISTRY
+
+required = {
+    "roformer-model-bs-roformer-sw-by-jarredou",
+    "roformer-model-bs-roformer-musdb18hq-by-zfturbo",
+}
+available = {
+    model.slug
+    for category in MODEL_REGISTRY.categories()
+    for model in MODEL_REGISTRY.list(category)
+}
+missing = sorted(required - available)
+if missing:
+    raise SystemExit("В BS-RoFormer registry отсутствуют: " + ", ".join(missing))
+print("BS-RoFormer registry: обязательные модели найдены.")
+PY
 }
 
 case "$BACKEND" in
@@ -79,7 +118,8 @@ case "$BACKEND" in
     install_torch_241
     "$UV_BIN" pip install \
       --python "$ENV_DIR/bin/python" \
-      "audio-separator[gpu]==0.44.5"
+      "audio-separator[gpu]==0.44.5" \
+      "bs-roformer-infer==0.1.5"
     verify_top_separator_models
     ;;
   lavasr)
