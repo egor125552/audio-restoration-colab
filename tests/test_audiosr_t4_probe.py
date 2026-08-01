@@ -74,12 +74,50 @@ class AudioSrT4ProbeTests(unittest.TestCase):
         self.assertTrue(options["pass_through_build_failures"])
         self.assertTrue(options["disable_tf32"])
 
+    def test_export_adapter_hides_optional_audiosr_kwargs(self) -> None:
+        class FakeModule:
+            pass
+
+        class FakeDiffusion:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def __call__(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+                return "result"
+
+        diffusion = FakeDiffusion()
+        fake_torch = SimpleNamespace(nn=SimpleNamespace(Module=FakeModule))
+        adapter = self.probe._make_export_diffusion_adapter(
+            diffusion_module=diffusion,
+            torch=fake_torch,
+        )
+
+        result = adapter.forward("audio", "step")
+
+        self.assertEqual(result, "result")
+        self.assertEqual(
+            diffusion.calls,
+            [
+                (
+                    ("audio", "step"),
+                    {
+                        "y": None,
+                        "context_list": [],
+                        "context_attn_mask_list": [],
+                    },
+                )
+            ],
+        )
+
     def test_probe_uses_aot_export_instead_of_lazy_torch_compile(self) -> None:
         source = PROBE_PATH.read_text(encoding="utf-8")
 
         self.assertIn("torch.export.export(", source)
         self.assertIn("torch_tensorrt.dynamo.compile(", source)
         self.assertNotIn("torch.compile(", source)
+        self.assertIn("_make_export_diffusion_adapter", source)
+        self.assertNotIn("kwargs=export_kwargs", source)
         self.assertIn("граф уже полностью скомпилирован", source)
 
     def test_snr_is_infinite_for_identical_audio(self) -> None:
