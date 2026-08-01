@@ -24,19 +24,19 @@ fi
 ENV_ROOT="$CACHE_ROOT/envs"
 REPO_ROOT="$CACHE_ROOT/repos"
 ENV_DIR="$ENV_ROOT/$BACKEND"
-READY_MARKER="$ENV_DIR/.audio-restoration-ready-v6"
+READY_MARKER="$ENV_DIR/.audio-restoration-ready-v7"
 mkdir -p "$ENV_ROOT" "$REPO_ROOT"
 
 if [[ -f "$READY_MARKER" ]]; then
   exit 0
 fi
 
-install_torch_241() {
+install_torch_251() {
   echo "Устанавливаю PyTorch для видеокарты…"
   "$UV_BIN" pip install \
     --python "$ENV_DIR/bin/python" \
     --index-url https://download.pytorch.org/whl/cu121 \
-    torch==2.4.1 torchaudio==2.4.1 torchvision==0.19.1
+    torch==2.5.1 torchaudio==2.5.1 torchvision==0.20.1
 }
 
 install_python_tools() {
@@ -114,7 +114,7 @@ case "$BACKEND" in
     "$UV_BIN" python install 3.11
     "$UV_BIN" venv --allow-existing --python 3.11 "$ENV_DIR"
     install_python_tools
-    install_torch_241
+    install_torch_251
     "$UV_BIN" pip install \
       --python "$ENV_DIR/bin/python" \
       "audio-separator[gpu]==0.44.5" \
@@ -125,7 +125,7 @@ case "$BACKEND" in
     "$UV_BIN" python install 3.10
     "$UV_BIN" venv --allow-existing --python 3.10 "$ENV_DIR"
     install_python_tools
-    install_torch_241
+    install_torch_251
     "$UV_BIN" pip install \
       --python "$ENV_DIR/bin/python" \
       "git+https://github.com/ysharma3501/LavaSR.git@33ac040892519c1bb4aed7eb32e79af51cc29e2a"
@@ -135,7 +135,7 @@ case "$BACKEND" in
     "$UV_BIN" python install 3.10
     "$UV_BIN" venv --allow-existing --python 3.10 "$ENV_DIR"
     install_python_tools
-    install_torch_241
+    install_torch_251
     FLASH_REPO="$REPO_ROOT/flashsr"
     if [[ ! -d "$FLASH_REPO/.git" ]]; then
       echo "Получаю код FlashSR…"
