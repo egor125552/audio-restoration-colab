@@ -16,6 +16,12 @@ from pathlib import Path
 os.environ["MPLBACKEND"] = "Agg"
 
 PROBE_SECONDS = 5.12
+ENGINE_CACHE_DIR = Path(
+    os.environ.get(
+        "AUDIOSR_TRT_CACHE_DIR",
+        "/content/audio-restoration-models/cache/audiosr-t4-engines",
+    )
+)
 
 
 def _find_diffusion_module(model):
@@ -120,6 +126,13 @@ def _tensorrt_options(torch):
         "pass_through_build_failures": True,
         # Tesla T4 has no TF32 support; disabling it avoids repeated warnings.
         "disable_tf32": True,
+        # Persist compiled sub-engines inside the current Colab runtime. A failed
+        # Python process no longer makes the next identical run rebuild everything.
+        "cache_built_engines": True,
+        "reuse_cached_engines": True,
+        "engine_cache_dir": str(ENGINE_CACHE_DIR),
+        "engine_cache_size": 20 * 1024**3,
+        "timing_cache_path": str(ENGINE_CACHE_DIR / "timing-cache.bin"),
     }
 
 
@@ -230,7 +243,7 @@ def _compile_diffusion_aot(
         flush=True,
     )
     started = time.perf_counter()
-    with torch.inference_mode():
+    with torch.no_grad():
         exported = torch.export.export(
             export_module,
             (example_x, example_timesteps),
@@ -243,6 +256,8 @@ def _compile_diffusion_aot(
         flush=True,
     )
 
+    ENGINE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"Кэш TensorRT: {ENGINE_CACHE_DIR}", flush=True)
     print(
         "3/3: AOT-компиляция экспортированного графа через "
         "torch_tensorrt.dynamo.compile…",
@@ -268,7 +283,9 @@ def _compile_diffusion_aot(
     )
 
     # Verify the compiled graph once before putting it into the full sampler.
-    with torch.inference_mode():
+    # no_grad disables gradients without creating restricted inference tensors;
+    # Torch-TensorRT fallback/autograd wrappers may still save tensors internally.
+    with torch.no_grad():
         reference = export_module(example_x, example_timesteps)
         candidate = compiled_module(example_x, example_timesteps)
     if reference.shape != candidate.shape:
@@ -302,7 +319,10 @@ def _run_once(*, model, source: Path, seed: int, steps: int, guidance: float, to
     started = time.perf_counter()
     from audiosr import super_resolution
 
-    with torch.inference_mode():
+    # no_grad is required here instead of inference_mode. The compiled
+    # Torch-TensorRT graph can contain fallback/autograd wrappers that save an
+    # input tensor internally even though backward will never be executed.
+    with torch.no_grad():
         generated = super_resolution(
             model,
             str(source),
