@@ -15,10 +15,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: stem-colab-900ms-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
-
 jobs:
   inference:
     name: Настоящий forward 900 мс — ${{ matrix.model_id }}
