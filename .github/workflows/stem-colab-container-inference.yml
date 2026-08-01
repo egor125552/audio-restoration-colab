@@ -21,24 +21,29 @@ concurrency:
 
 jobs:
   inference:
-    name: Настоящий forward 900 мс — ${{ matrix.group }}
+    name: Настоящий forward 900 мс — ${{ matrix.model_id }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 180
     strategy:
       fail-fast: false
+      max-parallel: 15
       matrix:
-        include:
-          - group: основные
-            model_ids: >-
-              denoise_normal denoise_aggressive stems_six stems_four
-          - group: вокал-и-минусовка
-            model_ids: >-
-              stems_vocal_balanced stems_vocal_clean
-              stems_instrumental_clean stems_instrumental_full
-              stems_karaoke stems_bleed_suppressor stems_aspiration
-          - group: реверберация
-            model_ids: >-
-              dereverb_big dereverb_super dereverb_echo dereverb_fused
+        model_id:
+          - denoise_normal
+          - denoise_aggressive
+          - stems_vocal_balanced
+          - stems_vocal_clean
+          - stems_instrumental_clean
+          - stems_instrumental_full
+          - stems_karaoke
+          - stems_six
+          - stems_four
+          - dereverb_big
+          - dereverb_super
+          - dereverb_echo
+          - dereverb_fused
+          - stems_bleed_suppressor
+          - stems_aspiration
 
     steps:
       - name: Получить код ветки
@@ -50,9 +55,9 @@ jobs:
       - name: Скачать официальный CPU-образ Google Colab
         run: docker pull us-docker.pkg.dev/colab-images/public/cpu-runtime
 
-      - name: Полный forward моделей группы на аудио 900 мс
+      - name: Полный forward модели на аудио 900 мс
         run: |
-          mkdir -p probe-artifacts
+          mkdir -p probe-artifacts/${{ matrix.model_id }}
           docker run --rm \
             --shm-size=2g \
             --entrypoint /bin/bash \
@@ -61,48 +66,34 @@ jobs:
             -e AUDIO_RESTORATION_PROJECT_ROOT=/workspace \
             -e AUDIO_RESTORATION_CACHE=/tmp/audio-models \
             -e PYTHONPATH=/workspace/src:/workspace/workers \
-            -e MODEL_IDS="${{ matrix.model_ids }}" \
+            -e MODEL_ID="${{ matrix.model_id }}" \
             us-docker.pkg.dev/colab-images/public/cpu-runtime \
             -lc '
-              set -u
-              python3 -m pip install --quiet uv==0.12.1 || exit 10
+              set -euo pipefail
+              python3 -m pip install --quiet uv==0.12.1
               export PATH="/root/.local/bin:/usr/local/bin:$PATH"
-              command -v ffmpeg || exit 11
+              command -v ffmpeg
               chmod +x scripts/prepare_backend.sh
-              scripts/prepare_backend.sh separator /tmp/audio-models || exit 12
+              scripts/prepare_backend.sh separator /tmp/audio-models
 
-              read -r -a models <<< "$MODEL_IDS"
-              overall=0
-              for model in "${models[@]}"; do
-                echo "========== REAL 900 MS INFERENCE: $model =========="
-                repeat=1
-                if [[ "$model" == "stems_six" ]]; then
-                  repeat=2
-                fi
-                mkdir -p "/workspace/probe-artifacts/$model"
-                export AUDIO_RESTORATION_JOB_LOG="/workspace/probe-artifacts/$model/model.log"
-                /tmp/audio-models/envs/separator/bin/python \
-                  scripts/probe_separator_900ms.py \
-                  --model-id "$model" \
-                  --repeat "$repeat" \
-                  --work-root /workspace/probe-artifacts \
-                  2>&1 | tee "/workspace/probe-artifacts/$model/container.log"
-                status=${PIPESTATUS[0]}
-                if [[ "$status" -ne 0 ]]; then
-                  overall=1
-                  echo "MODEL_FAILED=$model status=$status"
-                else
-                  echo "MODEL_PASSED=$model"
-                fi
-              done
-              exit "$overall"
+              repeat=1
+              if [[ "$MODEL_ID" == "stems_six" ]]; then
+                repeat=2
+              fi
+              export AUDIO_RESTORATION_JOB_LOG="/workspace/probe-artifacts/$MODEL_ID/model.log"
+              /tmp/audio-models/envs/separator/bin/python \
+                scripts/probe_separator_900ms.py \
+                --model-id "$MODEL_ID" \
+                --repeat "$repeat" \
+                --work-root /workspace/probe-artifacts \
+                2>&1 | tee "/workspace/probe-artifacts/$MODEL_ID/container.log"
             '
 
-      - name: Сохранить отчёты, WAV и полные логи
+      - name: Сохранить отчёт, WAV и полный лог
         if: always()
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: colab-900ms-${{ matrix.group }}
-          path: probe-artifacts/
+          name: colab-900ms-${{ matrix.model_id }}
+          path: probe-artifacts/${{ matrix.model_id }}/
           if-no-files-found: warn
           retention-days: 14
