@@ -69,16 +69,16 @@ def test_russian_interface_and_model_switching(page: Page) -> None:
     expect(page.get_by_text("Количество шагов", exact=True)).to_be_visible()
 
     model_box.click()
-    model_box.fill("Разделитель — 6 стемов")
+    model_box.fill("Разделитель — топовые 6 стемов")
     page.get_by_role(
         "option",
-        name="Разделитель — 6 стемов",
+        name="Разделитель — топовые 6 стемов",
         exact=True,
     ).click()
     expect(
         page.get_by_role(
             "heading",
-            name="Шесть основных дорожек",
+            name="Топовое разделение на шесть дорожек — BS-RoFormer SW",
             exact=True,
         )
     ).to_be_visible()
