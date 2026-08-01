@@ -113,4 +113,5 @@ jobs:
           git add workers/separator_server.py workers/bs_roformer_adapter.py \
             .github/workflows/apply-bs-roformer-backend.yml
           git commit -m "Use registry-backed BS-RoFormer inference"
+          git pull --rebase origin agent/stem-separator-mixer
           git push origin agent/stem-separator-mixer
