@@ -60,7 +60,7 @@ class AudioSrT4ProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "diffusion_model"):
             self.probe._find_diffusion_module(EmptyRoot())
 
-    def test_tensorrt_options_avoid_tiny_fragments_enable_fp16_and_timing_cache(self) -> None:
+    def test_tensorrt_options_use_fp16_and_timing_cache(self) -> None:
         fake_torch = SimpleNamespace(float32="fp32", float16="fp16")
 
         options = self.probe._tensorrt_options(fake_torch)
