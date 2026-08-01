@@ -61,7 +61,6 @@ jobs:
                 stems_karaoke
                 stems_six
                 stems_four
-                stems_guitar
                 dereverb_big
                 dereverb_super
                 dereverb_echo
@@ -93,9 +92,8 @@ jobs:
                   echo "MODEL_PASSED=$model"
                 fi
 
-                # Сохраняем установленную среду, но удаляем тяжёлые веса,
-                # чтобы весь топ-набор последовательно поместился на runner.
                 rm -rf /tmp/audio-models/weights/separator/* || true
+                rm -rf /tmp/audio-models/weights/bs-roformer-infer/* || true
               done
               exit "$overall"
             '
