@@ -168,11 +168,11 @@ def _make_aot_diffusion_adapter(*, compiled_module, torch):
             if timesteps is None:
                 raise RuntimeError("TensorRT diffusion adapter получил timesteps=None.")
             if y is not None:
-                raise RuntimeError("TensorRT probe не поддерживает class conditioning y.")
+                raise RuntimeError("TensorRT probe не поддерживает conditioning y.")
             if context_list:
-                raise RuntimeError("TensorRT probe не поддерживает cross-attention context.")
+                raise RuntimeError("TensorRT probe не поддерживает cross-attention.")
             if context_attn_mask_list:
-                raise RuntimeError("TensorRT probe не поддерживает attention mask context.")
+                raise RuntimeError("TensorRT probe не поддерживает attention mask.")
             if kwargs:
                 raise RuntimeError(
                     "TensorRT diffusion adapter получил неожиданные аргументы: "
