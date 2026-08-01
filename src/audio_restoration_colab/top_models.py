@@ -63,17 +63,14 @@ def apply_top_model_catalog() -> None:
         source_text="OpenMIRLab BS-RoFormer registry / MUSDB18HQ",
     )
 
-    guitar = MODEL_SPECS["stems_guitar"]
-    MODEL_SPECS["stems_guitar"] = replace(
-        guitar,
-        model_filename="melband_roformer_guitar_becruily.ckpt",
-        source_text="becruily / Mel-Band RoFormer guitar",
-    )
-
-    # Эти пункты были построены на Demucs checkpoint. Они не должны тихо
-    # оставаться в меню под современными русскими названиями. Подробные
-    # барабаны вернутся только после проверки Mel-Band DrumSep.
-    for model_id in ("stems_drums_detailed", "stems_cinematic"):
+    # Эти пункты либо были построены на старых Demucs checkpoint, либо их
+    # checkpoint отсутствует в закреплённом реестре audio-separator 0.44.5.
+    # Гитара остаётся отдельным выходом основной шестистемовой BS-RoFormer.
+    for model_id in (
+        "stems_drums_detailed",
+        "stems_cinematic",
+        "stems_guitar",
+    ):
         MODEL_SPECS.pop(model_id, None)
 
     for model_id, model in tuple(MODEL_SPECS.items()):
