@@ -57,7 +57,6 @@ verify_top_separator_models() {
   local required_models=(
     "denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt"
     "denoise_mel_band_roformer_aufr33_aggr_sdr_27.9768.ckpt"
-    "melband_roformer_guitar_becruily.ckpt"
     "dereverb_big_mbr_ep_362.ckpt"
     "dereverb_super_big_mbr_ep_346.ckpt"
     "dereverb-echo_mel_band_roformer_sdr_13.4843_v2.ckpt"
