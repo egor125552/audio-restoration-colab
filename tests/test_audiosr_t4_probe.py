@@ -118,6 +118,9 @@ class AudioSrT4ProbeTests(unittest.TestCase):
         self.assertNotIn("torch.compile(", source)
         self.assertIn("_make_export_diffusion_adapter", source)
         self.assertNotIn("kwargs=export_kwargs", source)
+        self.assertIn("Each real diffusion call therefore has batch size 1", source)
+        self.assertIn("torch.tensor([999]", source)
+        self.assertNotIn("torch.tensor([999, 500]", source)
         self.assertIn("граф уже полностью скомпилирован", source)
 
     def test_snr_is_infinite_for_identical_audio(self) -> None:
