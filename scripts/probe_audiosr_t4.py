@@ -138,15 +138,17 @@ def _representative_diffusion_inputs(*, mode: str, module, torch):
     except StopIteration as error:
         raise RuntimeError("AudioSR diffusion_model не содержит параметров.") from error
 
+    # AudioSR runs conditional and unconditional guidance as two separate
+    # UNet calls. Each real diffusion call therefore has batch size 1.
     x = torch.randn(
-        2,
+        1,
         in_channels,
         latent_t,
         latent_f,
         device=parameter.device,
         dtype=parameter.dtype,
     )
-    timesteps = torch.tensor([999, 500], device=parameter.device, dtype=torch.long)
+    timesteps = torch.tensor([999], device=parameter.device, dtype=torch.long)
     return x, timesteps
 
 
