@@ -24,7 +24,7 @@ fi
 ENV_ROOT="$CACHE_ROOT/envs"
 REPO_ROOT="$CACHE_ROOT/repos"
 ENV_DIR="$ENV_ROOT/$BACKEND"
-READY_MARKER="$ENV_DIR/.audio-restoration-ready-v1"
+READY_MARKER="$ENV_DIR/.audio-restoration-ready-v2"
 mkdir -p "$ENV_ROOT" "$REPO_ROOT"
 
 if [[ -f "$READY_MARKER" ]]; then
@@ -53,7 +53,8 @@ case "$BACKEND" in
     install_torch_241
     "$UV_BIN" pip install \
       --python "$ENV_DIR/bin/python" \
-      "audio-separator[gpu]==0.44.5"
+      "audio-separator[gpu]==0.44.5" \
+      "demucs-infer[community]==4.2.2"
     ;;
   lavasr)
     "$UV_BIN" python install 3.10

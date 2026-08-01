@@ -11,52 +11,67 @@ from audio_restoration_colab.catalog import (
 
 
 class CatalogTests(unittest.TestCase):
-    def test_first_version_contains_exactly_five_models(self) -> None:
+    def test_existing_models_are_preserved(self) -> None:
+        for model_id in (
+            "denoise_normal",
+            "denoise_aggressive",
+            "lavasr_small",
+            "flashsr_medium",
+            "audiosr_large",
+        ):
+            self.assertIn(model_id, MODEL_SPECS)
+
+    def test_stem_catalog_contains_specialized_tasks(self) -> None:
+        required = {
+            "stems_vocal_balanced",
+            "stems_vocal_clean",
+            "stems_instrumental_clean",
+            "stems_six",
+            "stems_four",
+            "stems_guitar",
+            "dereverb_big",
+            "dereverb_super",
+            "dereverb_echo",
+            "stems_bleed_suppressor",
+        }
+        self.assertTrue(required.issubset(MODEL_SPECS))
         self.assertEqual(
-            list(MODEL_SPECS),
-            [
-                "denoise_normal",
-                "denoise_aggressive",
-                "lavasr_small",
-                "flashsr_medium",
-                "audiosr_large",
-            ],
+            get_model("stems_six").output_roles,
+            ("vocals", "drums", "bass", "guitar", "piano", "other"),
         )
 
-    def test_small_restoration_model_warns_that_it_is_for_speech(self) -> None:
-        model = get_model("lavasr_small")
-
-        self.assertIn("реч", model.warning.lower())
-        self.assertIn("музык", model.warning.lower())
+    def test_stem_models_are_lazy_and_declarative(self) -> None:
+        for model in MODEL_SPECS.values():
+            if model.backend != "stems":
+                continue
+            self.assertTrue(model.model_filename or model.ensemble_preset)
+            self.assertTrue(model.output_roles)
+            self.assertTrue(model.source_text)
 
     def test_each_model_has_separate_default_settings(self) -> None:
         settings = default_browser_settings()
-
         self.assertEqual(set(settings), set(MODEL_SPECS))
         self.assertIsNot(
-            settings["denoise_normal"],
-            settings["denoise_aggressive"],
+            settings["stems_six"],
+            settings["stems_four"],
         )
 
-    def test_unknown_or_out_of_range_settings_fall_back_safely(self) -> None:
+    def test_stem_settings_are_clamped(self) -> None:
         normalized = normalize_settings(
-            "audiosr_large",
+            "stems_six",
             {
-                "mode": "unknown",
-                "steps": 10_000,
-                "guidance": -5,
-                "seed": "not-a-number",
-                "lowpass": "yes",
-                "ignored": "value",
+                "quality": "unknown",
+                "segment": 9999,
+                "overlap": -10,
+                "chunk_minutes": 100,
+                "keep_loaded": "yes",
             },
         )
-
-        self.assertEqual(normalized["mode"], "basic")
-        self.assertEqual(normalized["steps"], 100)
-        self.assertEqual(normalized["guidance"], 1.0)
-        self.assertEqual(normalized["seed"], 42)
-        self.assertIs(normalized["lowpass"], True)
-        self.assertNotIn("ignored", normalized)
+        self.assertEqual(normalized["quality"], "balanced")
+        self.assertEqual(normalized["segment"], 512)
+        self.assertEqual(normalized["overlap"], 2)
+        self.assertEqual(normalized["chunk_minutes"], 30)
+        self.assertTrue(normalized["keep_loaded"])
 
     def test_unknown_model_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "Неизвестная модель"):

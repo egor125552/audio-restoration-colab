@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import subprocess
+import threading
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -36,6 +37,8 @@ BACKEND_LAYOUT = {
 JOB_LOG_ENV = "AUDIO_RESTORATION_JOB_LOG"
 PROJECT_ROOT_ENV = "AUDIO_RESTORATION_PROJECT_ROOT"
 PROGRESS_PREFIX = "@@AUDIO_RESTORATION_PROGRESS@@"
+SERVER_READY_PREFIX = "@@AUDIO_RESTORATION_SERVER_READY@@"
+SERVER_RESULT_PREFIX = "@@AUDIO_RESTORATION_SERVER_RESULT@@"
 TQDM_PERCENT = re.compile(r"(?<!\d)(100|[1-9]?\d)%\|")
 LineHandler = Callable[[str], None]
 CommandRunner = Callable[[list[str], dict[str, str], LineHandler | None], None]
@@ -112,13 +115,10 @@ class SubprocessWorker:
             cache_root=self.layout.cache_root,
         )
         log_path = output_dir.parent / "model.log"
-        environment = {
-            "AUDIO_RESTORATION_CACHE": str(self.layout.cache_root),
-            PROJECT_ROOT_ENV: str(project_root),
-            "PYTHONUNBUFFERED": "1",
-            "MPLBACKEND": "Agg",
-            JOB_LOG_ENV: str(log_path),
-        }
+        environment = _worker_environment(
+            layout=resolved_layout,
+            log_path=log_path,
+        )
         print(
             f"[audio-restoration] {model.short_title}: лог запуска — {log_path}",
             flush=True,
@@ -153,6 +153,226 @@ class SubprocessWorker:
         return read_worker_manifest(output_dir)
 
 
+class PersistentStemWorker:
+    """Один separator-процесс на весь сеанс Gradio.
+
+    Внутри процесса текущая модель остаётся в VRAM. При повторном запуске
+    того же checkpoint веса не загружаются заново. При смене модели старый
+    объект освобождается, но скачанные файлы остаются в дисковом кэше.
+    """
+
+    def __init__(
+        self,
+        *,
+        layout: RuntimeLayout,
+        command_runner: CommandRunner | None = None,
+    ) -> None:
+        self.layout = layout
+        self.command_runner = command_runner or _run_command
+        self._lock = threading.Lock()
+        self._process: subprocess.Popen[str] | None = None
+        self._prepared = False
+        self._project_root: Path | None = None
+
+    def run(
+        self,
+        *,
+        model_id: str,
+        source: Path,
+        output_dir: Path,
+        settings: dict[str, object],
+        progress: Callable[[float, str], None],
+    ) -> list[ModelResult]:
+        model = get_model(model_id)
+        if model.backend != "stems":
+            raise ValueError("PersistentStemWorker получил не stem-модель.")
+        with self._lock:
+            project_root = _resolve_project_root(self.layout.project_root)
+            self._project_root = project_root
+            log_path = output_dir.parent / "model.log"
+            environment = _worker_environment(
+                layout=RuntimeLayout(
+                    project_root=project_root,
+                    cache_root=self.layout.cache_root,
+                ),
+                log_path=log_path,
+            )
+            self._prepare(environment, progress)
+            self._ensure_server(environment, log_path)
+            progress(0.28, f"Запускаю: {model.short_title}…")
+            parser = _WorkerProgressParser(progress)
+            payload = {
+                "model_id": model_id,
+                "input": str(source),
+                "output_dir": str(output_dir),
+                "settings": settings,
+            }
+            result = self._request(
+                payload=payload,
+                log_path=log_path,
+                parser=parser,
+            )
+            if not result.get("ok"):
+                detail = str(result.get("error") or "неизвестная ошибка")
+                raise ValueError(f"Разделитель завершился с ошибкой: {detail}")
+            return read_worker_manifest(output_dir)
+
+    def close(self) -> None:
+        process = self._process
+        self._process = None
+        if process is None:
+            return
+        if process.poll() is None:
+            try:
+                assert process.stdin is not None
+                process.stdin.write(json.dumps({"action": "shutdown"}) + "\n")
+                process.stdin.flush()
+                process.wait(timeout=10)
+            except (BrokenPipeError, subprocess.TimeoutExpired):
+                process.terminate()
+
+    def _prepare(
+        self,
+        environment: dict[str, str],
+        progress: Callable[[float, str], None],
+    ) -> None:
+        if self._prepared:
+            return
+        assert self._project_root is not None
+        progress(
+            0.10,
+            "Проверяю постоянную среду разделителя и кэш моделей…",
+        )
+        command = [
+            str(self._project_root / "scripts" / "prepare_backend.sh"),
+            "separator",
+            str(self.layout.cache_root),
+        ]
+        self.command_runner(command, environment, None)
+        self._prepared = True
+
+    def _ensure_server(
+        self,
+        environment: dict[str, str],
+        log_path: Path,
+    ) -> None:
+        if self._process is not None and self._process.poll() is None:
+            return
+        assert self._project_root is not None
+        python = (
+            self.layout.cache_root
+            / "envs"
+            / "separator"
+            / "bin"
+            / "python"
+        )
+        server = self._project_root / "workers" / "separator_server.py"
+        command = [str(python), str(server)]
+        header = f"\n$ {shlex.join(command)}\n"
+        _append_runtime_log(log_path, header)
+        print(header, end="", flush=True)
+        self._process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env={**os.environ, **environment},
+        )
+        self._wait_until_ready(log_path)
+
+    def _wait_until_ready(self, log_path: Path) -> None:
+        process = self._require_process()
+        assert process.stdout is not None
+        for line in process.stdout:
+            self._relay_line(line, log_path)
+            if line.startswith(SERVER_READY_PREFIX):
+                return
+        raise ValueError("Постоянный процесс разделителя не запустился.")
+
+    def _request(
+        self,
+        *,
+        payload: dict[str, object],
+        log_path: Path,
+        parser: _WorkerProgressParser,
+    ) -> dict[str, object]:
+        process = self._require_process()
+        if process.poll() is not None:
+            raise ValueError("Постоянный процесс разделителя неожиданно завершён.")
+        assert process.stdin is not None
+        assert process.stdout is not None
+        process.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        process.stdin.flush()
+        for line in process.stdout:
+            self._relay_line(line, log_path)
+            parser.feed(line)
+            if line.startswith(SERVER_RESULT_PREFIX):
+                raw = line[len(SERVER_RESULT_PREFIX) :].strip()
+                try:
+                    result = json.loads(raw)
+                except json.JSONDecodeError as error:
+                    raise ValueError(
+                        "Разделитель вернул повреждённый ответ."
+                    ) from error
+                if not isinstance(result, dict):
+                    raise ValueError("Разделитель вернул неправильный ответ.")
+                return result
+        raise ValueError("Связь с постоянным разделителем оборвалась.")
+
+    def _relay_line(self, line: str, log_path: Path) -> None:
+        print(line, end="", flush=True)
+        _append_runtime_log(log_path, line)
+
+    def _require_process(self) -> subprocess.Popen[str]:
+        if self._process is None:
+            raise ValueError("Постоянный процесс разделителя не создан.")
+        return self._process
+
+
+class RouterWorker:
+    def __init__(
+        self,
+        *,
+        layout: RuntimeLayout,
+        command_runner: CommandRunner | None = None,
+    ) -> None:
+        self.subprocess = SubprocessWorker(
+            layout=layout,
+            command_runner=command_runner,
+        )
+        self.stems = PersistentStemWorker(
+            layout=layout,
+            command_runner=command_runner,
+        )
+
+    def run(
+        self,
+        *,
+        model_id: str,
+        source: Path,
+        output_dir: Path,
+        settings: dict[str, object],
+        progress: Callable[[float, str], None],
+    ) -> list[ModelResult]:
+        if get_model(model_id).backend == "stems":
+            return self.stems.run(
+                model_id=model_id,
+                source=source,
+                output_dir=output_dir,
+                settings=settings,
+                progress=progress,
+            )
+        return self.subprocess.run(
+            model_id=model_id,
+            source=source,
+            output_dir=output_dir,
+            settings=settings,
+            progress=progress,
+        )
+
+
 def build_worker_command(
     *,
     layout: RuntimeLayout,
@@ -162,6 +382,8 @@ def build_worker_command(
     settings: dict[str, Any],
 ) -> list[str]:
     model = get_model(model_id)
+    if model.backend == "stems":
+        raise ValueError("Stem-модели запускаются постоянным worker-сервером.")
     environment_name, worker_name = BACKEND_LAYOUT[model.backend]
     python = layout.cache_root / "envs" / environment_name / "bin" / "python"
     worker = layout.project_root / "workers" / worker_name
@@ -210,6 +432,26 @@ def read_worker_manifest(job_dir: Path) -> list[ModelResult]:
     return results
 
 
+def _worker_environment(
+    *,
+    layout: RuntimeLayout,
+    log_path: Path,
+) -> dict[str, str]:
+    project_root = layout.project_root.resolve()
+    python_path = str(project_root / "src")
+    existing = os.environ.get("PYTHONPATH")
+    if existing:
+        python_path = os.pathsep.join((python_path, existing))
+    return {
+        "AUDIO_RESTORATION_CACHE": str(layout.cache_root),
+        PROJECT_ROOT_ENV: str(project_root),
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONPATH": python_path,
+        "MPLBACKEND": "Agg",
+        JOB_LOG_ENV: str(log_path),
+    }
+
+
 def _resolve_project_root(configured_root: Path) -> Path:
     candidates: list[Path] = []
     override = os.environ.get(PROJECT_ROOT_ENV)
@@ -233,6 +475,12 @@ def _resolve_project_root(configured_root: Path) -> Path:
         "Не найден корень проекта с scripts/prepare_backend.sh и workers. "
         "Перезапусти ячейки Colab сверху вниз."
     )
+
+
+def _append_runtime_log(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(text)
 
 
 def _run_command(

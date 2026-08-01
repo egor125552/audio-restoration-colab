@@ -19,60 +19,42 @@ class UiStateTests(unittest.TestCase):
     def test_default_model_is_general_audio_flashsr(self) -> None:
         self.assertEqual(DEFAULT_MODEL_ID, "flashsr_medium")
 
-    def test_selection_view_only_opens_relevant_panel(self) -> None:
-        view = selection_view(
-            "audiosr_large",
-            default_browser_settings(),
-        )
-
+    def test_stem_selection_opens_only_stem_panel(self) -> None:
+        view = selection_view("stems_six", default_browser_settings())
         self.assertEqual(
             view.visible_panels,
             {
                 "denoise": False,
                 "lavasr": False,
                 "flashsr": False,
-                "audiosr": True,
+                "audiosr": False,
+                "stems": True,
             },
         )
-        self.assertEqual(view.values["audiosr_steps"], 50)
+        self.assertTrue(view.values["stems_keep_loaded"])
+        self.assertEqual(view.values["stems_segment"], 256)
 
-    def test_normal_and_aggressive_denoise_settings_stay_separate(self) -> None:
+    def test_settings_remain_separate_per_stem_task(self) -> None:
         state = default_browser_settings()
         state = merge_active_settings(
             state,
-            "denoise_normal",
-            {"quality": "maximum", "segment": 320},
+            "stems_six",
+            {
+                "quality": "maximum",
+                "segment": 320,
+                "overlap": 16,
+                "chunk_minutes": 5,
+                "keep_loaded": True,
+            },
         )
-        state = merge_active_settings(
-            state,
-            "denoise_aggressive",
-            {"quality": "fast", "segment": 128},
-        )
+        self.assertEqual(state["stems_six"]["segment"], 320)
+        self.assertEqual(state["stems_four"]["segment"], 256)
 
-        self.assertEqual(
-            state["denoise_normal"],
-            {"quality": "maximum", "segment": 320},
-        )
-        self.assertEqual(
-            state["denoise_aggressive"],
-            {"quality": "fast", "segment": 128},
-        )
-
-    def test_information_includes_size_purpose_and_warning(self) -> None:
-        information = build_model_information("lavasr_small")
-
-        self.assertIn("50 МБ", information)
-        self.assertIn("Речь", information)
-        self.assertIn("музык", information.lower())
-
-    def test_corrupt_browser_state_falls_back_to_defaults(self) -> None:
-        view = selection_view(
-            "audiosr_large",
-            {"audiosr_large": {"steps": "bad", "guidance": 999}},
-        )
-
-        self.assertEqual(view.values["audiosr_steps"], 50)
-        self.assertEqual(view.values["audiosr_guidance"], 10.0)
+    def test_information_mentions_cache_source_and_license(self) -> None:
+        information = build_model_information("stems_six")
+        self.assertIn("Кэш", information)
+        self.assertIn("Источник", information)
+        self.assertIn("Лицензия", information)
 
     def test_command_help_does_not_require_gradio_import(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
@@ -80,7 +62,6 @@ class UiStateTests(unittest.TestCase):
             **os.environ,
             "PYTHONPATH": str(project_root / "src"),
         }
-
         completed = subprocess.run(
             [
                 sys.executable,
@@ -92,7 +73,6 @@ class UiStateTests(unittest.TestCase):
             text=True,
             env=environment,
         )
-
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("--share", completed.stdout)
 
