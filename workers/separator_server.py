@@ -25,7 +25,10 @@ from audio_restoration_colab.catalog import get_model  # noqa: E402
 READY_PREFIX = "@@AUDIO_RESTORATION_SERVER_READY@@"
 RESULT_PREFIX = "@@AUDIO_RESTORATION_SERVER_RESULT@@"
 BSINFER_PREFIX = "bsinfer:"
-MINIMUM_SAFE_SECONDS = 12.0
+# The longest retained RoFormer window is about 12 seconds. Keep a generous
+# margin so resampling cannot leave the padded buffer one sample shorter than
+# the model window. Results are trimmed back to the exact source duration.
+MINIMUM_SAFE_SECONDS = 16.0
 
 
 class SeparatorSession:
