@@ -31,8 +31,16 @@ if [[ -f "$READY_MARKER" ]]; then
   exit 0
 fi
 
-install_torch_251() {
+install_torch_241() {
   echo "Устанавливаю PyTorch для видеокарты…"
+  "$UV_BIN" pip install \
+    --python "$ENV_DIR/bin/python" \
+    --index-url https://download.pytorch.org/whl/cu121 \
+    torch==2.4.1 torchaudio==2.4.1 torchvision==0.19.1
+}
+
+install_torch_251() {
+  echo "Устанавливаю PyTorch для BS-RoFormer…"
   "$UV_BIN" pip install \
     --python "$ENV_DIR/bin/python" \
     --index-url https://download.pytorch.org/whl/cu121 \
@@ -125,7 +133,7 @@ case "$BACKEND" in
     "$UV_BIN" python install 3.10
     "$UV_BIN" venv --allow-existing --python 3.10 "$ENV_DIR"
     install_python_tools
-    install_torch_251
+    install_torch_241
     "$UV_BIN" pip install \
       --python "$ENV_DIR/bin/python" \
       "git+https://github.com/ysharma3501/LavaSR.git@33ac040892519c1bb4aed7eb32e79af51cc29e2a"
@@ -135,7 +143,7 @@ case "$BACKEND" in
     "$UV_BIN" python install 3.10
     "$UV_BIN" venv --allow-existing --python 3.10 "$ENV_DIR"
     install_python_tools
-    install_torch_251
+    install_torch_241
     FLASH_REPO="$REPO_ROOT/flashsr"
     if [[ ! -d "$FLASH_REPO/.git" ]]; then
       echo "Получаю код FlashSR…"
