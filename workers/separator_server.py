@@ -24,6 +24,7 @@ from audio_restoration_colab.catalog import get_model  # noqa: E402
 
 READY_PREFIX = "@@AUDIO_RESTORATION_SERVER_READY@@"
 RESULT_PREFIX = "@@AUDIO_RESTORATION_SERVER_RESULT@@"
+BSINFER_PREFIX = "bsinfer:"
 
 
 class SeparatorSession:
@@ -111,9 +112,10 @@ class SeparatorSession:
         segment = int(settings.get("segment", 256))
         overlap = int(settings.get("overlap", 8))
         use_autocast = quality != "maximum"
+        filename = model.model_filename or ""
         engine_kind = (
-            "demucs"
-            if (model.model_filename or "").startswith("demucs:")
+            "bs_roformer"
+            if filename.startswith(BSINFER_PREFIX)
             else "audio_separator"
         )
         cache_key = (
@@ -144,8 +146,8 @@ class SeparatorSession:
             0.09,
             "Разделитель: создаю постоянный экземпляр модели…",
         )
-        if engine_kind == "demucs":
-            engine = self._load_demucs(model.model_filename or "")
+        if engine_kind == "bs_roformer":
+            engine = self._load_bs_roformer(filename)
         else:
             engine = self._load_audio_separator(
                 model_id=model_id,
@@ -166,32 +168,28 @@ class SeparatorSession:
         )
         return engine
 
-    def _load_demucs(self, model_filename: str):
-        model_name = model_filename.split(":", 1)[1]
-        report_progress(
-            0.12,
-            "Разделитель: загружаю проверенный Demucs checkpoint; "
-            "скачивание требуется только один раз…",
-        )
-        import torch
-        from demucs_infer import DemucsSession
+    def _load_bs_roformer(self, model_filename: str):
+        from bs_roformer_adapter import BSRoformerEngine
 
+        model_slug = model_filename.removeprefix(BSINFER_PREFIX)
+        if not model_slug:
+            raise ValueError("Для BS-RoFormer не задан slug модели.")
         cache_root = Path(
             os.environ.get(
                 "AUDIO_RESTORATION_CACHE",
                 "/content/audio-restoration-models",
             )
         )
-        cache_dir = cache_root / "weights" / "demucs-infer"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        session = DemucsSession(
-            model=model_name,
-            device=device,
+        cache_dir = cache_root / "weights" / "bs-roformer-infer"
+        report_progress(
+            0.12,
+            "Разделитель: загружаю BS-RoFormer с проверкой SHA-256; "
+            "скачивание требуется только один раз…",
+        )
+        return BSRoformerEngine(
+            model_slug=model_slug,
             cache_dir=cache_dir,
         )
-        session.load()
-        return session
 
     def _load_audio_separator(
         self,
@@ -214,7 +212,6 @@ class SeparatorSession:
         )
         model_dir = cache_root / "weights" / "separator"
         model_dir.mkdir(parents=True, exist_ok=True)
-        demucs_overlap = min(0.75, max(0.1, overlap / 16.0))
         separator = Separator(
             output_dir=str(output_dir),
             model_file_dir=str(model_dir),
@@ -226,12 +223,6 @@ class SeparatorSession:
                 "override_model_segment_size": True,
                 "batch_size": 1,
                 "overlap": overlap,
-            },
-            demucs_params={
-                "segment_size": "Default",
-                "shifts": 2 if quality != "fast" else 1,
-                "overlap": demucs_overlap,
-                "segments_enabled": True,
             },
             ensemble_preset=model.ensemble_preset,
         )
@@ -342,12 +333,8 @@ class SeparatorSession:
         source: Path,
         output_dir: Path,
     ) -> list[Path]:
-        if self.engine_kind == "demucs":
-            return _run_demucs(
-                session=engine,
-                source=source,
-                output_dir=output_dir,
-            )
+        if self.engine_kind == "bs_roformer":
+            return engine.separate(source, output_dir)
         self._set_output_dir(engine, output_dir)
         raw_paths = engine.separate(str(source))
         return _resolve_paths(output_dir, raw_paths)
@@ -360,27 +347,6 @@ class SeparatorSession:
         model_instance = getattr(engine, "model_instance", None)
         if model_instance is not None and hasattr(model_instance, "output_dir"):
             model_instance.output_dir = str(output_dir)
-
-
-def _run_demucs(
-    *,
-    session,
-    source: Path,
-    output_dir: Path,
-) -> list[Path]:
-    from demucs_infer.audio import save_audio
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    _, stems = session.infer(str(source))
-    if not isinstance(stems, dict) or not stems:
-        raise ValueError("Demucs не вернул дорожки.")
-    paths: list[Path] = []
-    for name, waveform in stems.items():
-        target = output_dir / f"{name}.wav"
-        tensor = waveform.detach().cpu()
-        save_audio(tensor, str(target), session.samplerate)
-        paths.append(target)
-    return paths
 
 
 def _resolve_paths(output_dir: Path, raw_paths: Any) -> list[Path]:
