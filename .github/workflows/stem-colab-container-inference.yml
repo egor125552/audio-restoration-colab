@@ -15,11 +15,30 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: stem-colab-900ms-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   inference:
-    name: Все модели, настоящий forward 900 мс
+    name: Настоящий forward 900 мс — ${{ matrix.group }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: основные
+            model_ids: >-
+              denoise_normal denoise_aggressive stems_six stems_four
+          - group: вокал-и-минусовка
+            model_ids: >-
+              stems_vocal_balanced stems_vocal_clean
+              stems_instrumental_clean stems_instrumental_full
+              stems_karaoke stems_bleed_suppressor stems_aspiration
+          - group: реверберация
+            model_ids: >-
+              dereverb_big dereverb_super dereverb_echo dereverb_fused
 
     steps:
       - name: Получить код ветки
@@ -31,7 +50,7 @@ jobs:
       - name: Скачать официальный CPU-образ Google Colab
         run: docker pull us-docker.pkg.dev/colab-images/public/cpu-runtime
 
-      - name: Полный forward всех моделей на аудио 900 мс
+      - name: Полный forward моделей группы на аудио 900 мс
         run: |
           mkdir -p probe-artifacts
           docker run --rm \
@@ -42,6 +61,7 @@ jobs:
             -e AUDIO_RESTORATION_PROJECT_ROOT=/workspace \
             -e AUDIO_RESTORATION_CACHE=/tmp/audio-models \
             -e PYTHONPATH=/workspace/src:/workspace/workers \
+            -e MODEL_IDS="${{ matrix.model_ids }}" \
             us-docker.pkg.dev/colab-images/public/cpu-runtime \
             -lc '
               set -u
@@ -51,24 +71,7 @@ jobs:
               chmod +x scripts/prepare_backend.sh
               scripts/prepare_backend.sh separator /tmp/audio-models || exit 12
 
-              models=(
-                denoise_normal
-                denoise_aggressive
-                stems_vocal_balanced
-                stems_vocal_clean
-                stems_instrumental_clean
-                stems_instrumental_full
-                stems_karaoke
-                stems_six
-                stems_four
-                dereverb_big
-                dereverb_super
-                dereverb_echo
-                dereverb_fused
-                stems_bleed_suppressor
-                stems_aspiration
-              )
-
+              read -r -a models <<< "$MODEL_IDS"
               overall=0
               for model in "${models[@]}"; do
                 echo "========== REAL 900 MS INFERENCE: $model =========="
@@ -91,18 +94,15 @@ jobs:
                 else
                   echo "MODEL_PASSED=$model"
                 fi
-
-                rm -rf /tmp/audio-models/weights/separator/* || true
-                rm -rf /tmp/audio-models/weights/bs-roformer-infer/* || true
               done
               exit "$overall"
             '
 
-      - name: Сохранить все отчёты, WAV и полные логи
+      - name: Сохранить отчёты, WAV и полные логи
         if: always()
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: colab-900ms-all-models
+          name: colab-900ms-${{ matrix.group }}
           path: probe-artifacts/
           if-no-files-found: warn
           retention-days: 14
