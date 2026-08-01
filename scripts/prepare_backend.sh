@@ -24,7 +24,7 @@ fi
 ENV_ROOT="$CACHE_ROOT/envs"
 REPO_ROOT="$CACHE_ROOT/repos"
 ENV_DIR="$ENV_ROOT/$BACKEND"
-READY_MARKER="$ENV_DIR/.audio-restoration-ready-v7"
+READY_MARKER="$ENV_DIR/.audio-restoration-ready-v8"
 mkdir -p "$ENV_ROOT" "$REPO_ROOT"
 
 if [[ -f "$READY_MARKER" ]]; then
@@ -32,7 +32,7 @@ if [[ -f "$READY_MARKER" ]]; then
 fi
 
 install_torch_241() {
-  echo "Устанавливаю PyTorch для видеокарты…"
+  echo "Устанавливаю проверенный PyTorch 2.4.1…"
   "$UV_BIN" pip install \
     --python "$ENV_DIR/bin/python" \
     --index-url https://download.pytorch.org/whl/cu121 \
@@ -40,7 +40,7 @@ install_torch_241() {
 }
 
 install_torch_251() {
-  echo "Устанавливаю PyTorch для BS-RoFormer…"
+  echo "Устанавливаю PyTorch 2.5.1 для BS-RoFormer…"
   "$UV_BIN" pip install \
     --python "$ENV_DIR/bin/python" \
     --index-url https://download.pytorch.org/whl/cu121 \
@@ -100,6 +100,7 @@ verify_top_separator_models() {
   echo "Проверяю versioned registry BS-RoFormer…"
   "$ENV_DIR/bin/python" - <<'PY'
 from bs_roformer import MODEL_REGISTRY
+import torch
 
 required = {
     "roformer-model-bs-roformer-sw-by-jarredou",
@@ -113,7 +114,9 @@ available = {
 missing = sorted(required - available)
 if missing:
     raise SystemExit("В BS-RoFormer registry отсутствуют: " + ", ".join(missing))
-print("BS-RoFormer registry: обязательные модели найдены.")
+if not hasattr(torch.serialization, "safe_globals"):
+    raise SystemExit("PyTorch не содержит torch.serialization.safe_globals")
+print("BS-RoFormer registry и безопасная загрузка checkpoint готовы.")
 PY
 }
 
