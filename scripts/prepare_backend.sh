@@ -24,7 +24,7 @@ fi
 ENV_ROOT="$CACHE_ROOT/envs"
 REPO_ROOT="$CACHE_ROOT/repos"
 ENV_DIR="$ENV_ROOT/$BACKEND"
-READY_MARKER="$ENV_DIR/.audio-restoration-ready-v5"
+READY_MARKER="$ENV_DIR/.audio-restoration-ready-v6"
 mkdir -p "$ENV_ROOT" "$REPO_ROOT"
 
 if [[ -f "$READY_MARKER" ]]; then
@@ -111,8 +111,8 @@ PY
 
 case "$BACKEND" in
   separator)
-    "$UV_BIN" python install 3.10
-    "$UV_BIN" venv --allow-existing --python 3.10 "$ENV_DIR"
+    "$UV_BIN" python install 3.11
+    "$UV_BIN" venv --allow-existing --python 3.11 "$ENV_DIR"
     install_python_tools
     install_torch_241
     "$UV_BIN" pip install \
