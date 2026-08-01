@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import tempfile
@@ -39,6 +40,27 @@ ROLE_TITLES = {
     "clean": "очищенный звук",
     "noise": "выделенный шум",
     "restored": "дорисованный звук",
+    "vocals": "вокал",
+    "instrumental": "минусовка",
+    "drums": "барабаны",
+    "bass": "бас",
+    "guitar": "гитара",
+    "piano": "фортепиано",
+    "other": "остальные инструменты",
+    "dry": "сухой звук без реверберации",
+    "reverb": "выделенная реверберация и эхо",
+    "bleed": "удалённое просачивание",
+    "breaths": "дыхание и придыхания",
+    "kick": "бочка",
+    "snare": "рабочий барабан",
+    "toms": "томы",
+    "cymbals": "тарелки",
+    "hihat": "хай-хэт",
+    "ride": "райд",
+    "crash": "крэш",
+    "speech": "речь и диалоги",
+    "music": "музыка",
+    "sfx": "звуковые эффекты",
 }
 
 
@@ -69,6 +91,8 @@ class JobResult:
     secondary_preview: Path | None
     message: str
     log_path: Path
+    raw_results: tuple[ModelResult, ...]
+    stem_manifest: Path | None
 
 
 class AudioJobService:
@@ -149,9 +173,19 @@ class AudioJobService:
                     raise ValueError("Не удалось сохранить готовый аудиофайл.")
                 files.append(target)
 
+            stem_manifest = _write_stem_manifest(
+                job_dir=job_dir,
+                model_id=model_id,
+                source=source,
+                raw_results=raw_results,
+                formatted_files=files,
+            )
             progress(0.93, "Собираю ZIP-архив…")
+            archive_members = [*files]
+            if stem_manifest is not None:
+                archive_members.append(stem_manifest)
             archive = create_result_zip(
-                files,
+                archive_members,
                 job_dir / f"{source_name} - все результаты.zip",
             )
             progress(1.0, "Готово. Файлы можно слушать и скачивать.")
@@ -166,10 +200,12 @@ class AudioJobService:
                     raw_results[1].path if len(raw_results) > 1 else None
                 ),
                 message=(
-                    f"Готово: создано файлов — {len(files)}. "
-                    "Ниже можно скачать каждый файл или общий ZIP."
+                    f"Готово: создано дорожек — {len(files)}. "
+                    "Их можно прослушивать, смешивать и скачать одним ZIP."
                 ),
                 log_path=log_path,
+                raw_results=tuple(raw_results),
+                stem_manifest=stem_manifest,
             )
         except ValueError as error:
             _append_log(log_path, f"\nОШИБКА: {error}\n")
@@ -217,6 +253,41 @@ def validate_source(source: Path) -> Path:
             "M4A, AAC, OGG, OPUS, WMA или WEBM."
         )
     return resolved
+
+
+def _write_stem_manifest(
+    *,
+    job_dir: Path,
+    model_id: str,
+    source: Path,
+    raw_results: list[ModelResult],
+    formatted_files: list[Path],
+) -> Path | None:
+    if len(raw_results) < 2:
+        return None
+    path = job_dir / "stem-manifest.json"
+    payload = {
+        "model_id": model_id,
+        "source": source.name,
+        "stems": [
+            {
+                "role": result.role,
+                "title": ROLE_TITLES.get(result.role, result.role),
+                "raw_path": str(result.path),
+                "download_path": str(download),
+            }
+            for result, download in zip(
+                raw_results,
+                formatted_files,
+                strict=True,
+            )
+        ],
+    }
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return path
 
 
 def _run_ffmpeg(command: list[str]) -> None:

@@ -8,8 +8,14 @@ from pathlib import Path
 from typing import Any
 
 from .catalog import MODEL_SPECS, default_browser_settings, get_model
-from .jobs import AudioJobService, JobProcessingError, JobProgress
-from .runtime import ModelResult, RuntimeLayout, SubprocessWorker
+from .jobs import (
+    ROLE_TITLES,
+    AudioJobService,
+    JobProcessingError,
+    JobProgress,
+)
+from .mixer import build_mix
+from .runtime import ModelResult, RouterWorker, RuntimeLayout
 from .ui_state import (
     DEFAULT_MODEL_ID,
     merge_active_settings,
@@ -33,6 +39,11 @@ CONTROL_KEYS = (
     "audiosr_guidance",
     "audiosr_seed",
     "audiosr_lowpass",
+    "stems_quality",
+    "stems_segment",
+    "stems_overlap",
+    "stems_chunk_minutes",
+    "stems_keep_loaded",
 )
 
 CSS = """
@@ -40,14 +51,15 @@ CSS = """
   font-size: 18px;
 }
 .gradio-container {
-  max-width: 1080px !important;
+  max-width: 1180px !important;
   margin: 0 auto !important;
 }
 #model-information {
   border-left: 0.3rem solid #2563eb;
   padding-left: 1rem;
 }
-#job-status {
+#job-status,
+#mix-status {
   border: 1px solid #64748b;
   padding: 0.75rem 1rem;
   min-height: 3rem;
@@ -56,11 +68,45 @@ CSS = """
 button {
   min-height: 3rem;
 }
+#stem-editor {
+  border: 2px solid #475569;
+  padding: 1rem;
+}
 @media (max-width: 640px) {
   :root {
     font-size: 16px;
   }
 }
+"""
+
+HOTKEY_SCRIPT = """
+<script>
+document.addEventListener("keydown", (event) => {
+  const tag = (event.target && event.target.tagName || "").toLowerCase();
+  if (["input", "textarea", "select"].includes(tag)) return;
+  if (event.code === "Space") {
+    const audio =
+      document.querySelector("#stem-mix-preview audio") ||
+      document.querySelector("#stem-preview audio") ||
+      document.querySelector("audio");
+    if (!audio) return;
+    event.preventDefault();
+    if (audio.paused) audio.play(); else audio.pause();
+  }
+  if (event.altKey && event.key === "1") {
+    document.querySelector("#mix-all button")?.click();
+  }
+  if (event.altKey && event.key === "2") {
+    document.querySelector("#mix-no-vocals button")?.click();
+  }
+  if (event.altKey && event.key === "3") {
+    document.querySelector("#mix-no-drums button")?.click();
+  }
+  if (event.altKey && event.key === "Enter") {
+    document.querySelector("#mix-build button")?.click();
+  }
+});
+</script>
 """
 
 
@@ -77,7 +123,7 @@ class DemoWorker:
         progress: JobProgress,
     ) -> list[ModelResult]:
         del settings
-        progress(0.55, "Демонстрационный режим: создаю тестовый результат…")
+        progress(0.55, "Демонстрационный режим: создаю тестовые дорожки…")
         model = get_model(model_id)
         results: list[ModelResult] = []
         for role in model.output_roles:
@@ -103,32 +149,34 @@ def build_app(*, demo_mode: bool = False):
     )
 
     with gr.Blocks(
-        title="Восстановление и очистка аудио",
+        title="Восстановление, разделение и очистка аудио",
         theme="default",
         css=CSS,
+        head=HOTKEY_SCRIPT,
         delete_cache=(21_600, 21_600),
         analytics_enabled=False,
     ) as app:
         gr.Markdown(
             "# Восстановление и очистка аудио\n\n"
-            "Загрузи файл, выбери модель и нажми «Начать обработку». "
-            "Модель скачивается только при первом запуске."
+            "Загрузи файл, выбери задачу и нажми «Начать обработку». "
+            "Веса скачиваются только при первом запуске. Для разделителя "
+            "повторный запуск той же модели использует уже загруженную модель."
         )
         if demo_notice:
             gr.HTML(demo_notice)
         gr.Markdown(
-            "**Важно:** дорисовка создаёт правдоподобные верхние частоты, "
-            "но не может буквально вернуть удалённый оригинал."
+            "**Важно:** дорисовка создаёт правдоподобные частоты, "
+            "а разделение оценивает источники и может оставлять артефакты."
         )
 
         settings_state = gr.BrowserState(
             default_browser_settings(),
-            storage_key="audio-restoration-settings-v1",
+            storage_key="audio-restoration-settings-v2",
             secret="audio-restoration-colab-settings",
         )
         selected_model_state = gr.BrowserState(
             DEFAULT_MODEL_ID,
-            storage_key="audio-restoration-selected-model-v1",
+            storage_key="audio-restoration-selected-model-v2",
             secret="audio-restoration-colab-model",
         )
         output_format_state = gr.BrowserState(
@@ -136,6 +184,7 @@ def build_app(*, demo_mode: bool = False):
             storage_key="audio-restoration-format-v1",
             secret="audio-restoration-colab-format",
         )
+        stem_state = gr.State({})
 
         with gr.Group():
             input_file = gr.File(
@@ -146,8 +195,11 @@ def build_app(*, demo_mode: bool = False):
             model_dropdown = gr.Dropdown(
                 choices=MODEL_CHOICES,
                 value=DEFAULT_MODEL_ID,
-                label="2. Модель",
-                info="Настройки ниже изменятся под выбранную модель.",
+                label="2. Модель или задача",
+                info=(
+                    "Есть восстановление, очистка, разделение песни "
+                    "и специализированное удаление реверберации."
+                ),
                 allow_custom_value=False,
             )
             model_information = gr.Markdown(
@@ -262,6 +314,59 @@ def build_app(*, demo_mode: bool = False):
                 info="Рекомендуется для MP3 и разделённых файлов.",
             )
 
+        with gr.Group(
+            visible=initial_view.visible_panels["stems"],
+        ) as stems_group:
+            gr.Markdown(
+                "### Настройки разделения и DeReverb\n\n"
+                "Одна и та же модель остаётся загруженной между заданиями. "
+                "При смене модели предыдущая выгружается из VRAM, "
+                "но её файлы остаются в дисковом кэше."
+            )
+            stems_quality = gr.Radio(
+                choices=[
+                    ("Быстро", "fast"),
+                    ("Сбалансированно", "balanced"),
+                    ("Максимальное качество, FP32", "maximum"),
+                ],
+                value=initial_view.values["stems_quality"],
+                label="Качество и точность",
+            )
+            with gr.Row():
+                stems_segment = gr.Slider(
+                    minimum=128,
+                    maximum=512,
+                    step=32,
+                    value=initial_view.values["stems_segment"],
+                    label="Размер спектрального фрагмента",
+                )
+                stems_overlap = gr.Slider(
+                    minimum=2,
+                    maximum=16,
+                    step=2,
+                    value=initial_view.values["stems_overlap"],
+                    label="Перекрытие фрагментов",
+                )
+            stems_chunk_minutes = gr.Slider(
+                minimum=1,
+                maximum=30,
+                step=1,
+                value=initial_view.values["stems_chunk_minutes"],
+                label="Длина крупного куска для очень длинной записи, минут",
+                info=(
+                    "Обычные песни обрабатываются целиком. Длинные записи "
+                    "режутся без повторной загрузки модели."
+                ),
+            )
+            stems_keep_loaded = gr.Checkbox(
+                value=initial_view.values["stems_keep_loaded"],
+                label="Оставлять выбранную модель в памяти после обработки",
+                info=(
+                    "Повтор той же задачи начнётся быстрее. "
+                    "Отключи только при нехватке VRAM."
+                ),
+            )
+
         output_format = gr.Radio(
             choices=[
                 ("Как у исходного файла", "source"),
@@ -289,7 +394,7 @@ def build_app(*, demo_mode: bool = False):
                 interactive=False,
             )
             secondary_preview = gr.Audio(
-                label="Второй результат, например выделенный шум",
+                label="Второй результат",
                 type="filepath",
                 interactive=False,
             )
@@ -307,6 +412,117 @@ def build_app(*, demo_mode: bool = False):
             interactive=False,
         )
 
+        with gr.Group(
+            visible=False,
+            elem_id="stem-editor",
+        ) as stem_editor:
+            gr.Markdown(
+                "## Мини-редактор стемов\n\n"
+                "Инференс повторно не запускается. Здесь используются уже "
+                "готовые WAV-дорожки. Горячие клавиши вне полей ввода: "
+                "Space — воспроизведение/пауза; Alt+1 — все дорожки; "
+                "Alt+2 — без вокала; Alt+3 — без барабанов; "
+                "Alt+Enter — собрать микс."
+            )
+            stem_selector = gr.Dropdown(
+                choices=[],
+                label="Дорожка для отдельного прослушивания",
+                allow_custom_value=False,
+            )
+            stem_preview = gr.Audio(
+                label="Выбранная отдельная дорожка",
+                type="filepath",
+                interactive=False,
+                elem_id="stem-preview",
+            )
+            mix_roles = gr.CheckboxGroup(
+                choices=[],
+                value=[],
+                label="Какие дорожки включить в пользовательский микс",
+            )
+            with gr.Row():
+                mix_all = gr.Button(
+                    "Включить все",
+                    elem_id="mix-all",
+                )
+                mix_no_vocals = gr.Button(
+                    "Без вокала",
+                    elem_id="mix-no-vocals",
+                )
+                mix_only_vocals = gr.Button("Только вокал")
+                mix_no_drums = gr.Button(
+                    "Без барабанов",
+                    elem_id="mix-no-drums",
+                )
+            gr.Markdown(
+                "### Громкость групп\n\n"
+                "100% — исходный уровень. Изменение выполняется без нейросети."
+            )
+            with gr.Row():
+                gain_vocals = gr.Slider(
+                    0,
+                    200,
+                    value=100,
+                    step=1,
+                    label="Вокал, %",
+                )
+                gain_drums = gr.Slider(
+                    0,
+                    200,
+                    value=100,
+                    step=1,
+                    label="Барабаны, %",
+                )
+                gain_bass = gr.Slider(
+                    0,
+                    200,
+                    value=100,
+                    step=1,
+                    label="Бас, %",
+                )
+            with gr.Row():
+                gain_guitar = gr.Slider(
+                    0,
+                    200,
+                    value=100,
+                    step=1,
+                    label="Гитары, %",
+                )
+                gain_piano = gr.Slider(
+                    0,
+                    200,
+                    value=100,
+                    step=1,
+                    label="Клавишные, %",
+                )
+                gain_other = gr.Slider(
+                    0,
+                    200,
+                    value=100,
+                    step=1,
+                    label="Остальное, %",
+                )
+            mix_build = gr.Button(
+                "Собрать или обновить пользовательский микс",
+                variant="primary",
+                elem_id="mix-build",
+            )
+            mix_status = gr.HTML(
+                "<div role='status' aria-live='polite'>"
+                "Выбери дорожки и собери микс.</div>",
+                elem_id="mix-status",
+            )
+            mix_preview = gr.Audio(
+                label="Пользовательский микс",
+                type="filepath",
+                interactive=False,
+                elem_id="stem-mix-preview",
+            )
+            mix_file = gr.File(
+                label="Скачать пользовательский микс",
+                interactive=False,
+            )
+
         controls = [
             denoise_quality,
             denoise_segment,
@@ -319,12 +535,18 @@ def build_app(*, demo_mode: bool = False):
             audiosr_guidance,
             audiosr_seed,
             audiosr_lowpass,
+            stems_quality,
+            stems_segment,
+            stems_overlap,
+            stems_chunk_minutes,
+            stems_keep_loaded,
         ]
         groups = [
             denoise_group,
             lavasr_group,
             flashsr_group,
             audiosr_group,
+            stems_group,
         ]
         selection_outputs = [
             model_information,
@@ -340,6 +562,7 @@ def build_app(*, demo_mode: bool = False):
                 gr.update(visible=view.visible_panels["lavasr"]),
                 gr.update(visible=view.visible_panels["flashsr"]),
                 gr.update(visible=view.visible_panels["audiosr"]),
+                gr.update(visible=view.visible_panels["stems"]),
                 *(view.values[key] for key in CONTROL_KEYS),
             )
 
@@ -440,9 +663,23 @@ def build_app(*, demo_mode: bool = False):
                     [],
                     None,
                     str(error.log_path),
+                    {},
+                    gr.update(visible=False),
+                    gr.update(choices=[], value=None),
+                    None,
+                    gr.update(choices=[], value=[]),
                 )
             except ValueError as error:
                 raise gr.Error(str(error)) from error
+
+            payload = {
+                item.role: str(item.path) for item in result.raw_results
+            }
+            choices = [
+                (ROLE_TITLES.get(role, role), role) for role in payload
+            ]
+            first_role = next(iter(payload), None)
+            editor_visible = len(payload) > 1
             status_html = (
                 "<div role='status' aria-live='polite'><strong>"
                 + html.escape(result.message)
@@ -455,6 +692,14 @@ def build_app(*, demo_mode: bool = False):
                 [str(path) for path in result.files],
                 str(result.archive),
                 str(result.log_path),
+                payload,
+                gr.update(visible=editor_visible),
+                gr.update(choices=choices, value=first_role),
+                payload.get(first_role) if first_role else None,
+                gr.update(
+                    choices=choices,
+                    value=list(payload),
+                ),
             )
 
         run_button.click(
@@ -472,9 +717,133 @@ def build_app(*, demo_mode: bool = False):
                 result_files,
                 result_zip,
                 diagnostic_log,
+                stem_state,
+                stem_editor,
+                stem_selector,
+                stem_preview,
+                mix_roles,
             ],
             concurrency_limit=1,
             show_progress="full",
+        )
+
+        stem_selector.change(
+            lambda role, state: (state or {}).get(role),
+            inputs=[stem_selector, stem_state],
+            outputs=stem_preview,
+        )
+
+        def preset_roles(
+            preset: str,
+            state: dict[str, str],
+        ) -> list[str]:
+            roles = list((state or {}).keys())
+            if preset == "all":
+                return roles
+            if preset == "no_vocals":
+                return [
+                    role
+                    for role in roles
+                    if role not in {"vocals", "clean", "dry", "breaths"}
+                ]
+            if preset == "only_vocals":
+                return [
+                    role
+                    for role in roles
+                    if role in {"vocals", "clean", "dry"}
+                ]
+            if preset == "no_drums":
+                return [
+                    role
+                    for role in roles
+                    if role
+                    not in {
+                        "drums",
+                        "kick",
+                        "snare",
+                        "toms",
+                        "cymbals",
+                        "hihat",
+                        "ride",
+                        "crash",
+                    }
+                ]
+            return roles
+
+        mix_all.click(
+            lambda state: preset_roles("all", state),
+            inputs=stem_state,
+            outputs=mix_roles,
+        )
+        mix_no_vocals.click(
+            lambda state: preset_roles("no_vocals", state),
+            inputs=stem_state,
+            outputs=mix_roles,
+        )
+        mix_only_vocals.click(
+            lambda state: preset_roles("only_vocals", state),
+            inputs=stem_state,
+            outputs=mix_roles,
+        )
+        mix_no_drums.click(
+            lambda state: preset_roles("no_drums", state),
+            inputs=stem_state,
+            outputs=mix_roles,
+        )
+
+        def make_mix(
+            state: dict[str, str],
+            selected: list[str],
+            vocals: float,
+            drums: float,
+            bass: float,
+            guitar: float,
+            piano: float,
+            other: float,
+        ):
+            try:
+                path = build_mix(
+                    stem_paths=state or {},
+                    selected_roles=selected or [],
+                    gains={
+                        "vocals": vocals / 100.0,
+                        "drums": drums / 100.0,
+                        "bass": bass / 100.0,
+                        "guitar": guitar / 100.0,
+                        "piano": piano / 100.0,
+                        "other": other / 100.0,
+                    },
+                )
+            except ValueError as error:
+                return (
+                    "<div role='status' aria-live='assertive'><strong>"
+                    + html.escape(str(error))
+                    + "</strong></div>",
+                    None,
+                    None,
+                )
+            return (
+                "<div role='status' aria-live='polite'><strong>"
+                "Микс собран без повторного запуска нейросети."
+                "</strong></div>",
+                str(path),
+                str(path),
+            )
+
+        mix_build.click(
+            make_mix,
+            inputs=[
+                stem_state,
+                mix_roles,
+                gain_vocals,
+                gain_drums,
+                gain_bass,
+                gain_guitar,
+                gain_piano,
+                gain_other,
+            ],
+            outputs=[mix_status, mix_preview, mix_file],
+            concurrency_limit=1,
         )
 
     app.queue(default_concurrency_limit=1, max_size=8)
@@ -497,7 +866,7 @@ def _build_service(*, demo_mode: bool) -> AudioJobService:
     worker = (
         DemoWorker()
         if demo_mode
-        else SubprocessWorker(
+        else RouterWorker(
             layout=RuntimeLayout(
                 project_root=PROJECT_ROOT,
                 cache_root=cache_root,
@@ -511,6 +880,7 @@ def _active_values(
     model_id: str,
     all_values: dict[str, Any],
 ) -> dict[str, Any]:
+    model = get_model(model_id)
     if model_id.startswith("denoise_"):
         return {
             "quality": all_values["denoise_quality"],
@@ -532,6 +902,14 @@ def _active_values(
             "seed": all_values["audiosr_seed"],
             "lowpass": all_values["audiosr_lowpass"],
         }
+    if model.backend == "stems":
+        return {
+            "quality": all_values["stems_quality"],
+            "segment": all_values["stems_segment"],
+            "overlap": all_values["stems_overlap"],
+            "chunk_minutes": all_values["stems_chunk_minutes"],
+            "keep_loaded": all_values["stems_keep_loaded"],
+        }
     return {}
 
 
@@ -541,7 +919,7 @@ def _path_or_none(path: Path | None) -> str | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Русский интерфейс очистки и дорисовки аудио.",
+        description="Русский интерфейс восстановления и разделения аудио.",
     )
     parser.add_argument(
         "--share",

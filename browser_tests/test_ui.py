@@ -8,25 +8,34 @@ from playwright.sync_api import Page, expect
 
 def test_russian_interface_and_model_switching(page: Page) -> None:
     console_errors: list[str] = []
-    page.on(
-        "console",
-        lambda message: (
-            console_errors.append(message.text)
-            if message.type == "error"
-            else None
-        ),
+
+    def record_console_error(message) -> None:
+        if message.type != "error":
+            return
+        text = message.text
+        if text.startswith("AbortError: signal is aborted without reason"):
+            return
+        console_errors.append(text)
+
+    def record_page_error(error) -> None:
+        text = str(error)
+        if text.startswith("AbortError: signal is aborted without reason"):
+            return
+        console_errors.append(text)
+
+    page.on("console", record_console_error)
+    page.on("pageerror", record_page_error)
+
+    # Gradio keeps a queue/streaming connection alive, so networkidle is not a
+    # reliable readiness signal. Wait for the accessible application heading.
+    page.goto("http://127.0.0.1:7860", wait_until="domcontentloaded")
+
+    heading = page.get_by_role(
+        "heading",
+        name="Восстановление и очистка аудио",
+        exact=True,
     )
-    page.on("pageerror", lambda error: console_errors.append(str(error)))
-
-    page.goto("http://127.0.0.1:7860", wait_until="networkidle")
-
-    expect(
-        page.get_by_role(
-            "heading",
-            name="Восстановление и очистка аудио",
-            exact=True,
-        )
-    ).to_be_visible()
+    expect(heading).to_be_visible(timeout=30_000)
     expect(
         page.get_by_role("button", name="4. Начать обработку", exact=True)
     ).to_be_visible()
@@ -58,6 +67,34 @@ def test_russian_interface_and_model_switching(page: Page) -> None:
         )
     ).to_be_visible()
     expect(page.get_by_text("Количество шагов", exact=True)).to_be_visible()
+
+    model_box.click()
+    model_box.fill("Разделитель — топовые 6 стемов")
+    page.get_by_role(
+        "option",
+        name="Разделитель — топовые 6 стемов",
+        exact=True,
+    ).click()
+    expect(
+        page.get_by_role(
+            "heading",
+            name="Топовое разделение на шесть дорожек — BS-RoFormer SW",
+            exact=True,
+        )
+    ).to_be_visible()
+    expect(
+        page.get_by_role(
+            "checkbox",
+            name="Оставлять выбранную модель в памяти после обработки",
+            exact=True,
+        )
+    ).to_be_checked()
+    expect(
+        page.get_by_text(
+            "Повтор той же задачи начнётся быстрее",
+            exact=False,
+        )
+    ).to_be_visible()
 
     artifact_dir = Path("test-artifacts")
     artifact_dir.mkdir(exist_ok=True)

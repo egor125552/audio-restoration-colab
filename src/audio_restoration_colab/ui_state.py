@@ -24,12 +24,27 @@ class SelectionView:
 
 def build_model_information(model_id: str) -> str:
     model = get_model(model_id)
+    source = (
+        f"\n\n**Источник:** {model.source_text}" if model.source_text else ""
+    )
+    license_text = (
+        f"\n\n**Лицензия:** {model.license_text}"
+        if model.license_text
+        else ""
+    )
+    cache_note = (
+        "\n\n**Кэш:** веса скачиваются один раз; повторный запуск той же "
+        "модели использует уже загруженную модель, пока работает Colab."
+        if model.backend == "stems"
+        else ""
+    )
     return (
         f"## {model.title}\n\n"
         f"**Назначение:** {model.purpose}\n\n"
         f"**Размер:** {model.size_text}\n\n"
         f"{model.description}\n\n"
         f"**Важно:** {model.warning}"
+        f"{cache_note}{source}{license_text}"
     )
 
 
@@ -45,6 +60,7 @@ def selection_view(
         if model_id in {"denoise_normal", "denoise_aggressive"}
         else "denoise_normal"
     )
+    stem_id = model_id if get_model(model_id).backend == "stems" else "stems_six"
     return SelectionView(
         information=build_model_information(model_id),
         visible_panels={
@@ -52,6 +68,7 @@ def selection_view(
             "lavasr": model_id == "lavasr_small",
             "flashsr": model_id == "flashsr_medium",
             "audiosr": model_id == "audiosr_large",
+            "stems": get_model(model_id).backend == "stems",
         },
         values={
             "denoise_quality": state[denoise_id]["quality"],
@@ -65,6 +82,11 @@ def selection_view(
             "audiosr_guidance": state["audiosr_large"]["guidance"],
             "audiosr_seed": state["audiosr_large"]["seed"],
             "audiosr_lowpass": state["audiosr_large"]["lowpass"],
+            "stems_quality": state[stem_id]["quality"],
+            "stems_segment": state[stem_id]["segment"],
+            "stems_overlap": state[stem_id]["overlap"],
+            "stems_chunk_minutes": state[stem_id]["chunk_minutes"],
+            "stems_keep_loaded": state[stem_id]["keep_loaded"],
         },
     )
 

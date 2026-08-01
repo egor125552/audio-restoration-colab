@@ -1,0 +1,95 @@
+name: Реальный инференс 900 мс в контейнере Colab
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/stem-colab-container-inference.yml"
+      - "scripts/probe_separator_900ms.py"
+      - "scripts/prepare_backend.sh"
+      - "src/audio_restoration_colab/**"
+      - "workers/separator_server.py"
+      - "workers/separator_worker.py"
+
+permissions:
+  contents: read
+
+jobs:
+  inference:
+    name: Настоящий forward 900 мс — ${{ matrix.model_id }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix:
+        model_id:
+          - denoise_normal
+          - denoise_aggressive
+          - stems_vocal_balanced
+          - stems_vocal_clean
+          - stems_instrumental_clean
+          - stems_instrumental_full
+          - stems_karaoke
+          - stems_six
+          - stems_four
+          - dereverb_big
+          - dereverb_super
+          - dereverb_echo
+          - dereverb_fused
+          - stems_bleed_suppressor
+          - stems_aspiration
+
+    steps:
+      - name: Получить код ветки
+        uses: actions/checkout@v7.0.1
+
+      - name: Проверить место перед образом
+        run: df -h
+
+      - name: Скачать официальный CPU-образ Google Colab
+        run: docker pull us-docker.pkg.dev/colab-images/public/cpu-runtime
+
+      - name: Полный forward модели на аудио 900 мс
+        run: |
+          mkdir -p probe-artifacts/${{ matrix.model_id }}
+          docker run --rm \
+            --shm-size=2g \
+            --entrypoint /bin/bash \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            -e AUDIO_RESTORATION_PROJECT_ROOT=/workspace \
+            -e AUDIO_RESTORATION_CACHE=/tmp/audio-models \
+            -e PYTHONPATH=/workspace/src:/workspace/workers \
+            -e MODEL_ID="${{ matrix.model_id }}" \
+            us-docker.pkg.dev/colab-images/public/cpu-runtime \
+            -lc '
+              set -euo pipefail
+              python3 -m pip install --quiet uv==0.12.1
+              export PATH="/root/.local/bin:/usr/local/bin:$PATH"
+              command -v ffmpeg
+              chmod +x scripts/prepare_backend.sh
+              scripts/prepare_backend.sh separator /tmp/audio-models
+
+              repeat=1
+              if [[ "$MODEL_ID" == "stems_six" ]]; then
+                repeat=2
+              fi
+              export AUDIO_RESTORATION_JOB_LOG="/workspace/probe-artifacts/$MODEL_ID/model.log"
+              /tmp/audio-models/envs/separator/bin/python \
+                scripts/probe_separator_900ms.py \
+                --model-id "$MODEL_ID" \
+                --repeat "$repeat" \
+                --work-root /workspace/probe-artifacts \
+                2>&1 | tee "/workspace/probe-artifacts/$MODEL_ID/container.log"
+            '
+
+      - name: Сохранить отчёт, WAV и полный лог
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: colab-900ms-${{ matrix.model_id }}
+          path: probe-artifacts/${{ matrix.model_id }}/
+          if-no-files-found: warn
+          retention-days: 14

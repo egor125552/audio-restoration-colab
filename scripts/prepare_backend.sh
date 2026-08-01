@@ -24,7 +24,7 @@ fi
 ENV_ROOT="$CACHE_ROOT/envs"
 REPO_ROOT="$CACHE_ROOT/repos"
 ENV_DIR="$ENV_ROOT/$BACKEND"
-READY_MARKER="$ENV_DIR/.audio-restoration-ready-v1"
+READY_MARKER="$ENV_DIR/.audio-restoration-ready-v8"
 mkdir -p "$ENV_ROOT" "$REPO_ROOT"
 
 if [[ -f "$READY_MARKER" ]]; then
@@ -32,11 +32,19 @@ if [[ -f "$READY_MARKER" ]]; then
 fi
 
 install_torch_241() {
-  echo "Устанавливаю PyTorch для видеокарты…"
+  echo "Устанавливаю проверенный PyTorch 2.4.1…"
   "$UV_BIN" pip install \
     --python "$ENV_DIR/bin/python" \
     --index-url https://download.pytorch.org/whl/cu121 \
     torch==2.4.1 torchaudio==2.4.1 torchvision==0.19.1
+}
+
+install_torch_251() {
+  echo "Устанавливаю PyTorch 2.5.1 для BS-RoFormer…"
+  "$UV_BIN" pip install \
+    --python "$ENV_DIR/bin/python" \
+    --index-url https://download.pytorch.org/whl/cu121 \
+    torch==2.5.1 torchaudio==2.5.1 torchvision==0.20.1
 }
 
 install_python_tools() {
@@ -45,15 +53,84 @@ install_python_tools() {
     "setuptools==80.9.0"
 }
 
+verify_top_separator_models() {
+  local model_list="$ENV_DIR/audio-separator-models.json"
+  local preset_list="$ENV_DIR/audio-separator-presets.txt"
+  echo "Проверяю Mel-Band модели и ансамбли audio-separator…"
+  "$ENV_DIR/bin/audio-separator" \
+    --list_models \
+    --list_format=json > "$model_list"
+  "$ENV_DIR/bin/audio-separator" --list_presets > "$preset_list"
+
+  local required_models=(
+    "denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt"
+    "denoise_mel_band_roformer_aufr33_aggr_sdr_27.9768.ckpt"
+    "dereverb_big_mbr_ep_362.ckpt"
+    "dereverb_super_big_mbr_ep_346.ckpt"
+    "dereverb-echo_mel_band_roformer_sdr_13.4843_v2.ckpt"
+    "dereverb_echo_mbr_fused.ckpt"
+    "mel_band_roformer_bleed_suppressor_v1.ckpt"
+    "aspiration_mel_band_roformer_less_aggr_sdr_18.1201.ckpt"
+  )
+  local required_presets=(
+    "vocal_balanced"
+    "vocal_clean"
+    "instrumental_clean"
+    "instrumental_full"
+    "karaoke"
+  )
+  local missing=0
+  for model in "${required_models[@]}"; do
+    if ! grep -Fq "$model" "$model_list"; then
+      echo "В реестре audio-separator отсутствует: $model" >&2
+      missing=1
+    fi
+  done
+  for preset in "${required_presets[@]}"; do
+    if ! grep -Fq "$preset" "$preset_list"; then
+      echo "В audio-separator отсутствует preset: $preset" >&2
+      missing=1
+    fi
+  done
+  if [[ "$missing" -ne 0 ]]; then
+    echo "Каталог интерфейса не совпадает с установленным audio-separator." >&2
+    exit 4
+  fi
+
+  echo "Проверяю versioned registry BS-RoFormer…"
+  "$ENV_DIR/bin/python" - <<'PY'
+from bs_roformer import MODEL_REGISTRY
+import torch
+
+required = {
+    "roformer-model-bs-roformer-sw-by-jarredou",
+    "roformer-model-bs-roformer-musdb18hq-by-zfturbo",
+}
+available = {
+    model.slug
+    for category in MODEL_REGISTRY.categories()
+    for model in MODEL_REGISTRY.list(category)
+}
+missing = sorted(required - available)
+if missing:
+    raise SystemExit("В BS-RoFormer registry отсутствуют: " + ", ".join(missing))
+if not hasattr(torch.serialization, "safe_globals"):
+    raise SystemExit("PyTorch не содержит torch.serialization.safe_globals")
+print("BS-RoFormer registry и безопасная загрузка checkpoint готовы.")
+PY
+}
+
 case "$BACKEND" in
   separator)
-    "$UV_BIN" python install 3.10
-    "$UV_BIN" venv --allow-existing --python 3.10 "$ENV_DIR"
+    "$UV_BIN" python install 3.11
+    "$UV_BIN" venv --allow-existing --python 3.11 "$ENV_DIR"
     install_python_tools
-    install_torch_241
+    install_torch_251
     "$UV_BIN" pip install \
       --python "$ENV_DIR/bin/python" \
-      "audio-separator[gpu]==0.44.5"
+      "audio-separator[gpu]==0.44.5" \
+      "git+https://github.com/openmirlab/bs-roformer-infer.git@de35ada5817b878da0194ee2860253dda3a9c2b2"
+    verify_top_separator_models
     ;;
   lavasr)
     "$UV_BIN" python install 3.10
