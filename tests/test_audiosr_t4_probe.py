@@ -60,18 +60,27 @@ class AudioSrT4ProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "diffusion_model"):
             self.probe._find_diffusion_module(EmptyRoot())
 
-    def test_tensorrt_options_fail_loudly_and_enable_fp16(self) -> None:
+    def test_tensorrt_options_avoid_tiny_fragments_and_enable_fp16(self) -> None:
         fake_torch = SimpleNamespace(float32="fp32", float16="fp16")
 
         options = self.probe._tensorrt_options(fake_torch)
 
         self.assertEqual(options["enabled_precisions"], {"fp32", "fp16"})
-        self.assertEqual(options["min_block_size"], 3)
-        self.assertEqual(options["optimization_level"], 4)
+        self.assertEqual(options["min_block_size"], 5)
+        self.assertEqual(options["optimization_level"], 3)
         self.assertTrue(options["truncate_double"])
         self.assertNotIn("truncate_long_and_double", options)
         self.assertFalse(options["use_python_runtime"])
         self.assertTrue(options["pass_through_build_failures"])
+        self.assertTrue(options["disable_tf32"])
+
+    def test_probe_uses_aot_export_instead_of_lazy_torch_compile(self) -> None:
+        source = PROBE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("torch.export.export(", source)
+        self.assertIn("torch_tensorrt.dynamo.compile(", source)
+        self.assertNotIn("torch.compile(", source)
+        self.assertIn("граф уже полностью скомпилирован", source)
 
     def test_snr_is_infinite_for_identical_audio(self) -> None:
         import numpy as np
