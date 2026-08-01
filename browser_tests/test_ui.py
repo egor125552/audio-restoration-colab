@@ -75,11 +75,15 @@ def test_russian_interface_and_model_switching(page: Page) -> None:
         )
     ).to_be_visible()
     expect(
-        page.get_by_text("Оставлять модель загруженной", exact=True)
-    ).to_be_visible()
+        page.get_by_role(
+            "checkbox",
+            name="Оставлять выбранную модель в памяти после обработки",
+            exact=True,
+        )
+    ).to_be_checked()
     expect(
         page.get_by_text(
-            "Повторный запуск той же модели начнётся без повторной загрузки",
+            "Повтор той же задачи начнётся быстрее",
             exact=False,
         )
     ).to_be_visible()
