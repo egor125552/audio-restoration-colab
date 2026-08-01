@@ -18,15 +18,16 @@ def test_russian_interface_and_model_switching(page: Page) -> None:
     )
     page.on("pageerror", lambda error: console_errors.append(str(error)))
 
-    page.goto("http://127.0.0.1:7860", wait_until="networkidle")
+    # Gradio keeps a queue/streaming connection alive, so networkidle is not a
+    # reliable readiness signal. Wait for the accessible application heading.
+    page.goto("http://127.0.0.1:7860", wait_until="domcontentloaded")
 
-    expect(
-        page.get_by_role(
-            "heading",
-            name="Восстановление и очистка аудио",
-            exact=True,
-        )
-    ).to_be_visible()
+    heading = page.get_by_role(
+        "heading",
+        name="Восстановление и очистка аудио",
+        exact=True,
+    )
+    expect(heading).to_be_visible(timeout=30_000)
     expect(
         page.get_by_role("button", name="4. Начать обработку", exact=True)
     ).to_be_visible()
@@ -58,6 +59,30 @@ def test_russian_interface_and_model_switching(page: Page) -> None:
         )
     ).to_be_visible()
     expect(page.get_by_text("Количество шагов", exact=True)).to_be_visible()
+
+    model_box.click()
+    model_box.fill("Разделитель — 6 стемов")
+    page.get_by_role(
+        "option",
+        name="Разделитель — 6 стемов",
+        exact=True,
+    ).click()
+    expect(
+        page.get_by_role(
+            "heading",
+            name="Шесть основных дорожек",
+            exact=True,
+        )
+    ).to_be_visible()
+    expect(
+        page.get_by_text("Оставлять модель загруженной", exact=True)
+    ).to_be_visible()
+    expect(
+        page.get_by_text(
+            "Повторный запуск той же модели начнётся без повторной загрузки",
+            exact=False,
+        )
+    ).to_be_visible()
 
     artifact_dir = Path("test-artifacts")
     artifact_dir.mkdir(exist_ok=True)
