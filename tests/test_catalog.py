@@ -21,7 +21,7 @@ class CatalogTests(unittest.TestCase):
         ):
             self.assertIn(model_id, MODEL_SPECS)
 
-    def test_stem_catalog_contains_specialized_tasks(self) -> None:
+    def test_stem_catalog_contains_specialized_top_tasks(self) -> None:
         required = {
             "stems_vocal_balanced",
             "stems_vocal_clean",
@@ -39,6 +39,25 @@ class CatalogTests(unittest.TestCase):
             get_model("stems_six").output_roles,
             ("vocals", "drums", "bass", "guitar", "piano", "other"),
         )
+
+    def test_universal_models_are_modern_roformers(self) -> None:
+        self.assertEqual(
+            get_model("stems_six").model_filename,
+            "BS-Rofo-SW-Fixed.ckpt",
+        )
+        self.assertEqual(
+            get_model("stems_four").model_filename,
+            "mel_band_roformer_4stems_large_ver1.ckpt",
+        )
+        self.assertNotIn("stems_cinematic", MODEL_SPECS)
+        self.assertNotIn("stems_drums_detailed", MODEL_SPECS)
+
+    def test_no_demucs_checkpoint_is_visible(self) -> None:
+        for model in MODEL_SPECS.values():
+            filename = (model.model_filename or "").lower()
+            self.assertFalse(filename.startswith("demucs:"))
+            self.assertNotIn("htdemucs", filename)
+            self.assertFalse(filename.endswith(".th"))
 
     def test_stem_models_are_lazy_and_declarative(self) -> None:
         for model in MODEL_SPECS.values():
