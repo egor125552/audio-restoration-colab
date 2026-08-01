@@ -17,8 +17,8 @@ PROJECT_ROOT = Path(
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT / "workers"))
 
-from audio_restoration_colab.catalog import get_model  # noqa: E402
 from common import report_progress, write_manifest  # noqa: E402
+from audio_restoration_colab.catalog import get_model  # noqa: E402
 
 READY_PREFIX = "@@AUDIO_RESTORATION_SERVER_READY@@"
 RESULT_PREFIX = "@@AUDIO_RESTORATION_SERVER_RESULT@@"
@@ -81,10 +81,8 @@ class SeparatorSession:
             return
         release = getattr(self.engine, "release", None)
         if callable(release):
-            try:
+            with contextlib.suppress(Exception):
                 release()
-            except Exception:  # noqa: BLE001
-                pass
         self.engine = None
         self.engine_kind = None
         self.cache_key = None

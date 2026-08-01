@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 import time
 from pathlib import Path
-from typing import Callable
+from collections.abc import Callable
 
 FfmpegRunner = Callable[[list[str]], None]
 
