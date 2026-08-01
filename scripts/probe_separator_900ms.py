@@ -42,7 +42,10 @@ def create_probe_audio(path: Path) -> None:
         output.writeframes(payload)
 
 
-def validate_manifest(output_dir: Path, expected_roles: tuple[str, ...]) -> dict[str, object]:
+def validate_manifest(
+    output_dir: Path,
+    expected_roles: tuple[str, ...],
+) -> dict[str, object]:
     import soundfile as sf
 
     manifest_path = output_dir / "manifest.json"
