@@ -60,7 +60,7 @@ class AudioSrT4ProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "diffusion_model"):
             self.probe._find_diffusion_module(EmptyRoot())
 
-    def test_tensorrt_options_avoid_tiny_fragments_enable_fp16_and_cache(self) -> None:
+    def test_tensorrt_options_avoid_tiny_fragments_enable_fp16_and_timing_cache(self) -> None:
         fake_torch = SimpleNamespace(float32="fp32", float16="fp16")
 
         options = self.probe._tensorrt_options(fake_torch)
@@ -73,17 +73,13 @@ class AudioSrT4ProbeTests(unittest.TestCase):
         self.assertFalse(options["use_python_runtime"])
         self.assertTrue(options["pass_through_build_failures"])
         self.assertTrue(options["disable_tf32"])
-        self.assertTrue(options["cache_built_engines"])
-        self.assertTrue(options["reuse_cached_engines"])
-        self.assertEqual(
-            options["engine_cache_dir"],
-            str(self.probe.ENGINE_CACHE_DIR),
-        )
         self.assertEqual(
             options["timing_cache_path"],
-            str(self.probe.ENGINE_CACHE_DIR / "timing-cache.bin"),
+            str(self.probe.TENSORRT_CACHE_DIR / "timing-cache.bin"),
         )
-        self.assertGreaterEqual(options["engine_cache_size"], 5 * 1024**3)
+        self.assertNotIn("cache_built_engines", options)
+        self.assertNotIn("reuse_cached_engines", options)
+        self.assertNotIn("engine_cache_dir", options)
 
     def test_capture_diffusion_inputs_uses_real_forward_call(self) -> None:
         class FakeTensor:
@@ -185,8 +181,9 @@ class AudioSrT4ProbeTests(unittest.TestCase):
         self.assertIn("граф уже полностью скомпилирован", source)
         self.assertNotIn("torch.inference_mode()", source)
         self.assertGreaterEqual(source.count("with torch.no_grad():"), 3)
-        self.assertIn('"cache_built_engines": True', source)
-        self.assertIn('"reuse_cached_engines": True', source)
+        self.assertIn('"timing_cache_path":', source)
+        self.assertNotIn('"cache_built_engines": True', source)
+        self.assertNotIn('"reuse_cached_engines": True', source)
 
     def test_snr_is_infinite_for_identical_audio(self) -> None:
         import numpy as np
