@@ -74,6 +74,56 @@ class AudioSrT4ProbeTests(unittest.TestCase):
         self.assertTrue(options["pass_through_build_failures"])
         self.assertTrue(options["disable_tf32"])
 
+    def test_capture_diffusion_inputs_uses_real_forward_call(self) -> None:
+        class FakeTensor:
+            def __init__(self, name):
+                self.name = name
+
+            def detach(self):
+                return self
+
+            def clone(self):
+                return f"{self.name}-clone"
+
+        class FakeHandle:
+            def __init__(self):
+                self.removed = False
+
+            def remove(self):
+                self.removed = True
+
+        class FakeModule:
+            def __init__(self):
+                self.hook = None
+                self.handle = FakeHandle()
+
+            def register_forward_pre_hook(self, hook, *, with_kwargs=False):
+                self.hook = hook
+                self.with_kwargs = with_kwargs
+                return self.handle
+
+        module = FakeModule()
+        captured, handle = self.probe._capture_diffusion_inputs_once(module)
+
+        self.assertTrue(module.with_kwargs)
+        module.hook(
+            module,
+            (FakeTensor("x"),),
+            {"timesteps": FakeTensor("timesteps")},
+        )
+        module.hook(
+            module,
+            (FakeTensor("other-x"), FakeTensor("other-t")),
+            {},
+        )
+
+        self.assertEqual(
+            captured,
+            {"x": "x-clone", "timesteps": "timesteps-clone"},
+        )
+        handle.remove()
+        self.assertTrue(module.handle.removed)
+
     def test_export_adapter_hides_optional_audiosr_kwargs(self) -> None:
         class FakeModule:
             pass
@@ -110,17 +160,17 @@ class AudioSrT4ProbeTests(unittest.TestCase):
             ],
         )
 
-    def test_probe_uses_aot_export_instead_of_lazy_torch_compile(self) -> None:
+    def test_probe_uses_aot_export_and_real_runtime_shape(self) -> None:
         source = PROBE_PATH.read_text(encoding="utf-8")
 
         self.assertIn("torch.export.export(", source)
         self.assertIn("torch_tensorrt.dynamo.compile(", source)
         self.assertNotIn("torch.compile(", source)
         self.assertIn("_make_export_diffusion_adapter", source)
-        self.assertNotIn("kwargs=export_kwargs", source)
-        self.assertIn("Each real diffusion call therefore has batch size 1", source)
-        self.assertIn("torch.tensor([999]", source)
-        self.assertNotIn("torch.tensor([999, 500]", source)
+        self.assertIn("_capture_diffusion_inputs_once", source)
+        self.assertIn("Реальный AudioSR UNet-вход", source)
+        self.assertNotIn("default_audioldm_config", source)
+        self.assertNotIn("latent_t_size", source)
         self.assertIn("граф уже полностью скомпилирован", source)
 
     def test_snr_is_infinite_for_identical_audio(self) -> None:
