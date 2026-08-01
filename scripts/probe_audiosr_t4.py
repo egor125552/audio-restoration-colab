@@ -150,6 +150,24 @@ def _representative_diffusion_inputs(*, mode: str, module, torch):
     return x, timesteps
 
 
+def _make_export_diffusion_adapter(*, diffusion_module, torch):
+    class ExportDiffusionAdapter(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.diffusion_module = diffusion_module
+
+        def forward(self, x, timesteps):
+            return self.diffusion_module(
+                x,
+                timesteps,
+                y=None,
+                context_list=[],
+                context_attn_mask_list=[],
+            )
+
+    return ExportDiffusionAdapter()
+
+
 def _make_aot_diffusion_adapter(*, compiled_module, torch):
     class AotDiffusionAdapter(torch.nn.Module):
         def __init__(self):
@@ -195,11 +213,10 @@ def _compile_diffusion_aot(
         module=diffusion_module,
         torch=torch,
     )
-    export_kwargs = {
-        "y": None,
-        "context_list": [],
-        "context_attn_mask_list": [],
-    }
+    export_module = _make_export_diffusion_adapter(
+        diffusion_module=diffusion_module,
+        torch=torch,
+    )
 
     print(
         "3/3: заранее экспортирую единый AudioSR UNet-граф "
@@ -209,9 +226,8 @@ def _compile_diffusion_aot(
     started = time.perf_counter()
     with torch.inference_mode():
         exported = torch.export.export(
-            diffusion_module,
+            export_module,
             (example_x, example_timesteps),
-            kwargs=export_kwargs,
             strict=False,
         )
     node_count = sum(1 for _ in exported.graph.nodes)
@@ -247,11 +263,7 @@ def _compile_diffusion_aot(
 
     # Verify the compiled graph once before putting it into the full sampler.
     with torch.inference_mode():
-        reference = diffusion_module(
-            example_x,
-            example_timesteps,
-            **export_kwargs,
-        )
+        reference = export_module(example_x, example_timesteps)
         candidate = compiled_module(example_x, example_timesteps)
     if reference.shape != candidate.shape:
         raise RuntimeError(
