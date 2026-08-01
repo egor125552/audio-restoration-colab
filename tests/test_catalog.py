@@ -40,14 +40,18 @@ class CatalogTests(unittest.TestCase):
             ("vocals", "drums", "bass", "guitar", "piano", "other"),
         )
 
-    def test_universal_models_are_modern_roformers(self) -> None:
+    def test_universal_models_use_versioned_bs_registry(self) -> None:
         self.assertEqual(
             get_model("stems_six").model_filename,
-            "BS-Rofo-SW-Fixed.ckpt",
+            "bsinfer:roformer-model-bs-roformer-sw-by-jarredou",
         )
         self.assertEqual(
             get_model("stems_four").model_filename,
-            "mel_band_roformer_4stems_large_ver1.ckpt",
+            "bsinfer:roformer-model-bs-roformer-musdb18hq-by-zfturbo",
+        )
+        self.assertEqual(
+            get_model("stems_guitar").model_filename,
+            "melband_roformer_guitar_becruily.ckpt",
         )
         self.assertNotIn("stems_cinematic", MODEL_SPECS)
         self.assertNotIn("stems_drums_detailed", MODEL_SPECS)
