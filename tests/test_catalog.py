@@ -28,7 +28,6 @@ class CatalogTests(unittest.TestCase):
             "stems_instrumental_clean",
             "stems_six",
             "stems_four",
-            "stems_guitar",
             "dereverb_big",
             "dereverb_super",
             "dereverb_echo",
@@ -49,10 +48,7 @@ class CatalogTests(unittest.TestCase):
             get_model("stems_four").model_filename,
             "bsinfer:roformer-model-bs-roformer-musdb18hq-by-zfturbo",
         )
-        self.assertEqual(
-            get_model("stems_guitar").model_filename,
-            "melband_roformer_guitar_becruily.ckpt",
-        )
+        self.assertNotIn("stems_guitar", MODEL_SPECS)
         self.assertNotIn("stems_cinematic", MODEL_SPECS)
         self.assertNotIn("stems_drums_detailed", MODEL_SPECS)
 
