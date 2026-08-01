@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import subprocess
 import time
-from pathlib import Path
 from collections.abc import Callable
+from pathlib import Path
 
 FfmpegRunner = Callable[[list[str]], None]
 

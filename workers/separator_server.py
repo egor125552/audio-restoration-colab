@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import gc
 import json
 import os
@@ -18,6 +19,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT / "workers"))
 
 from common import report_progress, write_manifest  # noqa: E402
+
 from audio_restoration_colab.catalog import get_model  # noqa: E402
 
 READY_PREFIX = "@@AUDIO_RESTORATION_SERVER_READY@@"
