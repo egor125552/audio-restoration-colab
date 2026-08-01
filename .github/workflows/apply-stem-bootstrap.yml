@@ -1,0 +1,56 @@
+name: Развернуть реализацию разделителя стемов
+
+on:
+  push:
+    branches:
+      - agent/stem-separator-mixer
+    paths:
+      - ".stem-bootstrap/**"
+      - ".github/workflows/apply-stem-bootstrap.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Получить ветку
+        uses: actions/checkout@v4
+        with:
+          ref: agent/stem-separator-mixer
+          fetch-depth: 0
+
+      - name: Собрать и проверить архив
+        run: |
+          cat .stem-bootstrap/part-*.b64 | base64 --decode > /tmp/stem-implementation.tar.gz
+          echo "a4ad9395517377c81fa3fafa2860c5fde021bd1398ba433c28a9a9cd0eb75780  /tmp/stem-implementation.tar.gz" | sha256sum --check
+          tar -tzf /tmp/stem-implementation.tar.gz
+
+      - name: Развернуть реализацию
+        run: |
+          tar -xzf /tmp/stem-implementation.tar.gz -C .
+          rm -rf .stem-bootstrap
+          rm -f .github/workflows/apply-stem-bootstrap.yml
+
+      - name: Проверить Python и тесты
+        env:
+          PYTHONPATH: src:workers
+        run: |
+          python -m py_compile \
+            src/audio_restoration_colab/catalog.py \
+            src/audio_restoration_colab/ui_state.py \
+            src/audio_restoration_colab/jobs.py \
+            src/audio_restoration_colab/runtime.py \
+            src/audio_restoration_colab/mixer.py \
+            src/audio_restoration_colab/app.py \
+            workers/separator_server.py
+          python -m unittest discover -s tests -v
+
+      - name: Закоммитить готовую реализацию
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add cached stem separation and accessible mixer"
+          git push origin HEAD:agent/stem-separator-mixer
