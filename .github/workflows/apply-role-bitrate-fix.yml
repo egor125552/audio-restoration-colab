@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/fix-role-mapping-source-bitrate
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
