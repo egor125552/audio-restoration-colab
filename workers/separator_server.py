@@ -4,6 +4,7 @@ import contextlib
 import gc
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -441,14 +442,16 @@ def _canonicalize_outputs(
             assignments[role] = matched
             unused.remove(matched)
 
-    for role in expected_roles:
-        if role not in assignments and unused:
-            assignments[role] = unused.pop(0)
+    if len(expected_roles) == 1 and not assignments and unused:
+        assignments[expected_roles[0]] = unused.pop(0)
 
     missing = [role for role in expected_roles if role not in assignments]
     if missing:
+        filenames = ", ".join(path.name for path in paths)
         raise ValueError(
-            "Модель не вернула ожидаемые дорожки: " + ", ".join(missing)
+            "Не удалось определить роли дорожек "
+            + ", ".join(missing)
+            + f". Получены файлы: {filenames}"
         )
 
     canonical: dict[str, Path] = {}
@@ -468,37 +471,64 @@ def _matches_role(
     role: str,
     expected_roles: tuple[str, ...],
 ) -> bool:
-    name = path.stem.lower().replace("-", " ").replace("_", " ")
-    no_reverb = "no reverb" in name or "no echo" in name
+    label = _output_role_label(path)
     aliases = {
-        "vocals": ("vocals", "vocal"),
-        "instrumental": ("instrumental", "karaoke", "no vocals", "novocals"),
-        "drums": ("drums", "drum"),
-        "bass": ("bass",),
-        "guitar": ("guitar",),
-        "piano": ("piano", "keys"),
-        "other": ("other", "non vocals"),
-        "dry": ("dry", "dereverb", "no reverb", "no echo"),
-        "reverb": ("reverb", "echo"),
-        "clean": ("clean", "dry", "no bleed", "no aspiration", "no noise"),
-        "bleed": ("bleed",),
-        "breaths": ("aspiration", "breath"),
-        "kick": ("kick", "bombo"),
-        "snare": ("snare", "redoblante"),
-        "toms": ("toms", "tom"),
-        "cymbals": ("cymbals", "platillos"),
-        "hihat": ("hihat", "hi hat", "hh"),
-        "ride": ("ride",),
-        "crash": ("crash",),
-        "speech": ("speech", "dialog", "dialogue"),
-        "music": ("music",),
-        "sfx": ("sfx", "effect"),
+        "vocals": {"vocals", "vocal", "voice"},
+        "instrumental": {
+            "instrumental",
+            "karaoke",
+            "no vocals",
+            "no vocal",
+            "novocals",
+        },
+        "drums": {"drums", "drum"},
+        "bass": {"bass"},
+        "guitar": {"guitar"},
+        "piano": {"piano", "keys"},
+        "other": {"other", "non vocals"},
+        "dry": {"dry", "dereverb", "no reverb", "no echo"},
+        "reverb": {"reverb", "echo"},
+        "clean": {
+            "clean",
+            "dry",
+            "no bleed",
+            "no aspiration",
+            "no noise",
+        },
+        "bleed": {"bleed"},
+        "breaths": {"aspiration", "breath", "breaths"},
+        "kick": {"kick", "bombo"},
+        "snare": {"snare", "redoblante"},
+        "toms": {"toms", "tom"},
+        "cymbals": {"cymbals", "platillos"},
+        "hihat": {"hihat", "hi hat", "hh"},
+        "ride": {"ride"},
+        "crash": {"crash"},
+        "speech": {"speech", "dialog", "dialogue"},
+        "music": {"music"},
+        "sfx": {"sfx", "effect", "effects"},
     }
-    if role == "reverb" and no_reverb:
-        return False
-    if role == "instrumental" and "other" in name:
+    if role == "instrumental" and label == "other":
         return "other" not in expected_roles
-    return any(alias in name for alias in aliases.get(role, (role,)))
+    return label in aliases.get(role, {role})
+
+
+def _output_role_label(path: Path) -> str:
+    groups = re.findall(r"\(([^()]*)\)", path.stem)
+    if groups:
+        return _normalize_role_label(groups[-1])
+
+    label = _normalize_role_label(path.stem)
+    for prefix in ("input ", "output ", "stem "):
+        if label.startswith(prefix):
+            return label[len(prefix) :]
+    return label
+
+
+def _normalize_role_label(value: str) -> str:
+    return " ".join(
+        re.sub(r"[^a-z0-9]+", " ", value.lower()).split()
+    )
 
 
 @contextlib.contextmanager

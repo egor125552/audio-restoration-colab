@@ -122,7 +122,10 @@ class JobTests(unittest.TestCase):
                 )
             )
             preview_commands = [
-                command for command in commands if "-b:a" in command
+                command
+                for command in commands
+                if "-b:a" in command
+                and command[command.index("-b:a") + 1] == "96k"
             ]
             self.assertEqual(len(preview_commands), 2)
             self.assertTrue(
