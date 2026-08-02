@@ -4,11 +4,13 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from audio_restoration_colab.outputs import (
     build_ffmpeg_command,
     create_result_zip,
     output_extension,
+    probe_audio_bitrate,
     safe_stem,
 )
 
@@ -34,8 +36,43 @@ class OutputTests(unittest.TestCase):
 
         self.assertEqual(command[0], "ffmpeg")
         self.assertIn("libmp3lame", command)
-        self.assertIn("320k", command)
+        self.assertIn("320000", command)
         self.assertNotIn("shell=True", command)
+
+    def test_mp3_command_can_preserve_source_bitrate(self) -> None:
+        command = build_ffmpeg_command(
+            Path("/tmp/input.wav"),
+            Path("/tmp/output.mp3"),
+            source_bitrate=192_000,
+        )
+
+        self.assertEqual(
+            command[command.index("-b:a") + 1],
+            "192000",
+        )
+
+    @patch("audio_restoration_colab.outputs.subprocess.run")
+    def test_probe_audio_bitrate_prefers_audio_stream(self, run: Mock) -> None:
+        run.return_value = Mock(
+            returncode=0,
+            stdout=(
+                '{"streams": [{"bit_rate": "192000"}], '
+                '"format": {"bit_rate": "201000"}}'
+            ),
+        )
+
+        self.assertEqual(probe_audio_bitrate(Path("song.mp3")), 192_000)
+
+    @patch("audio_restoration_colab.outputs.subprocess.run")
+    def test_probe_audio_bitrate_falls_back_to_container(self, run: Mock) -> None:
+        run.return_value = Mock(
+            returncode=0,
+            stdout=(
+                '{"streams": [{}], "format": {"bit_rate": "128000"}}'
+            ),
+        )
+
+        self.assertEqual(probe_audio_bitrate(Path("song.m4a")), 128_000)
 
     def test_zip_contains_only_result_names(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
