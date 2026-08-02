@@ -86,6 +86,33 @@ class SeparatorServerTests(unittest.TestCase):
                 b"actual-instrumental",
             )
 
+    def test_two_stem_other_maps_to_known_counterpart(self) -> None:
+        cases = (
+            (("dry", "reverb"), "dry", "reverb"),
+            (("clean", "bleed"), "bleed", "clean"),
+            (("clean", "breaths"), "aspiration", "clean"),
+            (("vocals", "instrumental"), "vocals", "instrumental"),
+        )
+        for expected_roles, known_label, remaining_role in cases:
+            with self.subTest(expected_roles=expected_roles):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    known = root / f"song_({known_label})_model.wav"
+                    residual = root / "song_(other)_model.wav"
+                    known.write_bytes(b"known")
+                    residual.write_bytes(b"counterpart")
+
+                    mapped = self.server._canonicalize_outputs(
+                        paths=[residual, known],
+                        output_dir=root,
+                        expected_roles=expected_roles,
+                    )
+
+                    self.assertEqual(
+                        mapped[remaining_role].read_bytes(),
+                        b"counterpart",
+                    )
+
     def test_multiple_unknown_outputs_fail_instead_of_guessing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

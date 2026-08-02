@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from audio_restoration_colab.jobs import (
     AudioJobService,
@@ -172,6 +173,47 @@ class JobTests(unittest.TestCase):
             self.assertTrue(all(path.suffix == ".m4a" for path in result.files))
             self.assertEqual(result.primary_preview.suffix, ".mp3")
             self.assertEqual(result.secondary_preview.suffix, ".mp3")
+
+    @patch(
+        "audio_restoration_colab.jobs.probe_audio_bitrate",
+        return_value=192_000,
+    )
+    def test_source_mp3_preserves_reported_bitrate(self, _probe) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "song.mp3"
+            source.write_bytes(b"input")
+            commands: list[list[str]] = []
+
+            def tracking_ffmpeg(command: list[str]) -> None:
+                commands.append(command)
+                fake_ffmpeg(command)
+
+            service = AudioJobService(
+                jobs_root=root / "jobs",
+                worker=FakeWorker(),
+                ffmpeg_runner=tracking_ffmpeg,
+            )
+            service.process(
+                source=source,
+                model_id="denoise_normal",
+                format_choice="source",
+                raw_settings={},
+                progress=lambda _fraction, _message: None,
+            )
+
+            result_commands = [
+                command
+                for command in commands
+                if Path(command[-1]).parent.name == "results"
+            ]
+            self.assertEqual(len(result_commands), 2)
+            self.assertTrue(
+                all(
+                    command[command.index("-b:a") + 1] == "192000"
+                    for command in result_commands
+                )
+            )
 
     def test_preview_failure_falls_back_to_raw_wav(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

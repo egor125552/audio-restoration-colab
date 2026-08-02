@@ -16,6 +16,7 @@ from .outputs import (
     build_ffmpeg_command,
     create_result_zip,
     output_extension,
+    probe_audio_bitrate,
     safe_stem,
 )
 from .runtime import ModelResult
@@ -166,6 +167,11 @@ class AudioJobService:
             )
 
             extension = output_extension(format_choice, source)
+            source_bitrate = (
+                probe_audio_bitrate(source)
+                if format_choice == "source"
+                else None
+            )
             source_name = safe_stem(source.name)
             files: list[Path] = []
             total = len(raw_results)
@@ -178,7 +184,11 @@ class AudioJobService:
                     f"Сохраняю результат {index} из {total}…",
                 )
                 self.ffmpeg_runner(
-                    build_ffmpeg_command(raw_result.path, target)
+                    build_ffmpeg_command(
+                        raw_result.path,
+                        target,
+                        source_bitrate=source_bitrate,
+                    )
                 )
                 if not target.is_file():
                     raise ValueError("Не удалось сохранить готовый аудиофайл.")

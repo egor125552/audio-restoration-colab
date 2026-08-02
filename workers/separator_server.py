@@ -445,6 +445,20 @@ def _canonicalize_outputs(
     if len(expected_roles) == 1 and not assignments and unused:
         assignments[expected_roles[0]] = unused.pop(0)
 
+    # Several two-stem checkpoints use the generic label ``other`` for the
+    # residual side. Once exactly one role has been identified, the sole
+    # remaining file is its configured counterpart. This remains strict for
+    # completely unknown pairs and for every model with three or more stems.
+    if (
+        len(expected_roles) == 2
+        and len(assignments) == 1
+        and len(unused) == 1
+    ):
+        missing_role = next(
+            role for role in expected_roles if role not in assignments
+        )
+        assignments[missing_role] = unused.pop(0)
+
     missing = [role for role in expected_roles if role not in assignments]
     if missing:
         filenames = ", ".join(path.name for path in paths)
@@ -473,9 +487,17 @@ def _matches_role(
 ) -> bool:
     label = _output_role_label(path)
     aliases = {
-        "vocals": {"vocals", "vocal", "voice"},
+        "vocals": {
+            "vocals",
+            "vocal",
+            "voice",
+            "lead vocals",
+            "lead vocal",
+        },
         "instrumental": {
             "instrumental",
+            "instruments",
+            "accompaniment",
             "karaoke",
             "no vocals",
             "no vocal",
@@ -483,30 +505,50 @@ def _matches_role(
         },
         "drums": {"drums", "drum"},
         "bass": {"bass"},
-        "guitar": {"guitar"},
-        "piano": {"piano", "keys"},
-        "other": {"other", "non vocals"},
-        "dry": {"dry", "dereverb", "no reverb", "no echo"},
-        "reverb": {"reverb", "echo"},
+        "guitar": {"guitar", "guitars"},
+        "piano": {"piano", "keys", "keyboard"},
+        "other": {"other", "non vocals", "residual"},
+        "dry": {
+            "dry",
+            "dereverb",
+            "dereverbed",
+            "no reverb",
+            "no echo",
+        },
+        "reverb": {"reverb", "reverberation", "echo", "wet"},
         "clean": {
             "clean",
             "dry",
             "no bleed",
+            "no leakage",
             "no aspiration",
+            "no breaths",
             "no noise",
         },
-        "bleed": {"bleed"},
-        "breaths": {"aspiration", "breath", "breaths"},
-        "kick": {"kick", "bombo"},
-        "snare": {"snare", "redoblante"},
+        "bleed": {"bleed", "leakage", "residual bleed"},
+        "breaths": {
+            "aspiration",
+            "aspirations",
+            "breath",
+            "breaths",
+            "breathing",
+        },
+        "kick": {"kick", "kick drum", "bombo"},
+        "snare": {"snare", "snare drum", "redoblante"},
         "toms": {"toms", "tom"},
-        "cymbals": {"cymbals", "platillos"},
+        "cymbals": {"cymbals", "cymbal", "platillos"},
         "hihat": {"hihat", "hi hat", "hh"},
         "ride": {"ride"},
         "crash": {"crash"},
         "speech": {"speech", "dialog", "dialogue"},
-        "music": {"music"},
-        "sfx": {"sfx", "effect", "effects"},
+        "music": {"music", "background music", "bgm"},
+        "sfx": {
+            "sfx",
+            "effect",
+            "effects",
+            "sound effect",
+            "sound effects",
+        },
     }
     if role == "instrumental" and label == "other":
         return "other" not in expected_roles
