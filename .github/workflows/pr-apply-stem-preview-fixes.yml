@@ -1,0 +1,86 @@
+name: PR apply stem preview fixes
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/apply-stem-preview-fixes.yml"
+      - ".github/workflows/pr-apply-stem-preview-fixes.yml"
+      - "src/audio_restoration_colab/**"
+      - "workers/separator_server.py"
+      - "tests/**"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: agent/fix-stem-labels-fast-previews
+          fetch-depth: 0
+
+      - name: Apply embedded exact patch once
+        run: |
+          if grep -Fq 'from .result_ui import build_result_layout' src/audio_restoration_colab/app.py; then
+            echo 'Source patch is already applied.'
+          else
+            python - <<'PY'
+            from pathlib import Path
+
+            workflow = Path(
+                '.github/workflows/apply-stem-preview-fixes.yml'
+            ).read_text(encoding='utf-8')
+            marker = "          python - <<'PY'\n"
+            start = workflow.index(marker) + len(marker)
+            end = workflow.index("\n          PY", start)
+            lines = workflow[start:end].splitlines()
+            script = "\n".join(
+                line[10:] if line.startswith("          ") else line
+                for line in lines
+            )
+            target = Path('/tmp/apply-stem-preview-fixes.py')
+            target.write_text(script + "\n", encoding='utf-8')
+            compile(script, str(target), 'exec')
+            PY
+            python /tmp/apply-stem-preview-fixes.py
+          fi
+
+      - name: Install test tools
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: "0.12.1"
+          enable-cache: false
+
+      - name: Run focused checks
+        run: |
+          uv sync --group dev
+          uv run ruff check \
+            src/audio_restoration_colab/app.py \
+            src/audio_restoration_colab/jobs.py \
+            src/audio_restoration_colab/result_ui.py \
+            workers/separator_server.py \
+            tests/test_jobs.py \
+            tests/test_result_ui.py \
+            tests/test_separator_server.py
+          uv run pytest \
+            tests/test_jobs.py \
+            tests/test_result_ui.py \
+            tests/test_separator_server.py
+
+      - name: Commit source patch when needed
+        run: |
+          if git diff --quiet; then
+            echo 'No source patch to commit.'
+            exit 0
+          fi
+          git config user.name "audio-restoration-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/audio_restoration_colab/app.py workers/separator_server.py
+          git commit -m "Fix stem labels and dynamic fast previews"
+          git push
