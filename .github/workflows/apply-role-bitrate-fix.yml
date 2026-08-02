@@ -1,28 +1,20 @@
-name: Apply role and bitrate fix
+name: Validate role and bitrate fix
 
 on:
-  push:
-    branches:
-      - agent/fix-role-mapping-source-bitrate
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-and-test:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: agent/fix-role-mapping-source-bitrate
-          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Apply source patch
+      - name: Validate expected source changes
         run: python scripts/apply_role_bitrate_fix.py
       - name: Install focused test tools
         run: python -m pip install --disable-pip-version-check pytest ruff
@@ -43,20 +35,3 @@ jobs:
           tests/test_separator_server.py
           tests/test_outputs.py
           tests/test_jobs.py
-      - name: Commit patched sources
-        run: |
-          if git diff --quiet; then
-            echo "No source changes to commit."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            workers/separator_server.py \
-            src/audio_restoration_colab/outputs.py \
-            src/audio_restoration_colab/jobs.py \
-            tests/test_separator_server.py \
-            tests/test_outputs.py \
-            tests/test_jobs.py
-          git commit -m "Fix stem role mapping and preserve source bitrate"
-          git push
