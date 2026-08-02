@@ -1,0 +1,14 @@
+name: Manual stem preview verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: python -m py_compile scripts/apply_stem_preview_fixes.py

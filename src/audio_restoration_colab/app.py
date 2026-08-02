@@ -15,6 +15,7 @@ from .jobs import (
     JobProgress,
 )
 from .mixer import build_mix
+from .result_ui import build_result_layout
 from .runtime import ModelResult, RouterWorker, RuntimeLayout
 from .ui_state import (
     DEFAULT_MODEL_ID,
@@ -185,6 +186,7 @@ def build_app(*, demo_mode: bool = False):
             secret="audio-restoration-colab-format",
         )
         stem_state = gr.State({})
+        stem_preview_state = gr.State({})
 
         with gr.Group():
             input_file = gr.File(
@@ -418,8 +420,9 @@ def build_app(*, demo_mode: bool = False):
         ) as stem_editor:
             gr.Markdown(
                 "## Мини-редактор стемов\n\n"
-                "Инференс повторно не запускается. Здесь используются уже "
-                "готовые WAV-дорожки. Горячие клавиши вне полей ввода: "
+                "Инференс повторно не запускается. Для микса используются "
+                "полные дорожки, а для прослушивания — облегчённые "
+                "MP3-превью. Горячие клавиши вне полей ввода: "
                 "Space — воспроизведение/пауза; Alt+1 — все дорожки; "
                 "Alt+2 — без вокала; Alt+3 — без барабанов; "
                 "Alt+Enter — собрать микс."
@@ -656,18 +659,30 @@ def build_app(*, demo_mode: bool = False):
                     + "</strong><br>Полный лог сохранён ниже и одновременно "
                     "выведен в консоль Colab.</div>"
                 )
+                hidden = gr.update(visible=False)
                 return (
                     status_html,
-                    None,
-                    None,
+                    gr.update(value=None, visible=False),
+                    gr.update(value=None, visible=False),
                     [],
                     None,
                     str(error.log_path),
                     {},
-                    gr.update(visible=False),
+                    {},
+                    hidden,
                     gr.update(choices=[], value=None),
                     None,
                     gr.update(choices=[], value=[]),
+                    hidden,
+                    hidden,
+                    hidden,
+                    hidden,
+                    hidden,
+                    gr.update(visible=False, label="Остальное, %"),
+                    hidden,
+                    hidden,
+                    hidden,
+                    hidden,
                 )
             except ValueError as error:
                 raise gr.Error(str(error)) from error
@@ -675,11 +690,15 @@ def build_app(*, demo_mode: bool = False):
             payload = {
                 item.role: str(item.path) for item in result.raw_results
             }
-            choices = [
-                (ROLE_TITLES.get(role, role), role) for role in payload
-            ]
-            first_role = next(iter(payload), None)
-            editor_visible = len(payload) > 1
+            preview_payload = {
+                item.role: str(item.path)
+                for item in result.preview_results
+            }
+            roles = list(payload)
+            layout = build_result_layout(roles)
+            first_role = roles[0] if roles else None
+            primary_role = roles[0] if roles else None
+            secondary_role = roles[1] if len(roles) > 1 else None
             status_html = (
                 "<div role='status' aria-live='polite'><strong>"
                 + html.escape(result.message)
@@ -687,19 +706,54 @@ def build_app(*, demo_mode: bool = False):
             )
             return (
                 status_html,
-                _path_or_none(result.primary_preview),
-                _path_or_none(result.secondary_preview),
+                gr.update(
+                    value=preview_payload.get(primary_role),
+                    label=(
+                        "Быстрое превью: "
+                        + ROLE_TITLES.get(primary_role, primary_role)
+                        if primary_role
+                        else "Основной результат"
+                    ),
+                    visible=primary_role is not None,
+                ),
+                gr.update(
+                    value=preview_payload.get(secondary_role),
+                    label=(
+                        "Быстрое превью: "
+                        + ROLE_TITLES.get(secondary_role, secondary_role)
+                        if secondary_role
+                        else "Второй результат"
+                    ),
+                    visible=secondary_role is not None,
+                ),
                 [str(path) for path in result.files],
                 str(result.archive),
                 str(result.log_path),
                 payload,
-                gr.update(visible=editor_visible),
-                gr.update(choices=choices, value=first_role),
-                payload.get(first_role) if first_role else None,
+                preview_payload,
+                gr.update(visible=layout.editor_visible),
                 gr.update(
-                    choices=choices,
-                    value=list(payload),
+                    choices=list(layout.choices),
+                    value=first_role,
                 ),
+                preview_payload.get(first_role) if first_role else None,
+                gr.update(
+                    choices=list(layout.choices),
+                    value=roles,
+                ),
+                gr.update(visible=layout.gain_visibility["vocals"]),
+                gr.update(visible=layout.gain_visibility["drums"]),
+                gr.update(visible=layout.gain_visibility["bass"]),
+                gr.update(visible=layout.gain_visibility["guitar"]),
+                gr.update(visible=layout.gain_visibility["piano"]),
+                gr.update(
+                    visible=layout.gain_visibility["other"],
+                    label=layout.other_gain_label,
+                ),
+                gr.update(visible=layout.show_all_preset),
+                gr.update(visible=layout.show_no_vocals_preset),
+                gr.update(visible=layout.show_only_vocals_preset),
+                gr.update(visible=layout.show_no_drums_preset),
             )
 
         run_button.click(
@@ -718,10 +772,21 @@ def build_app(*, demo_mode: bool = False):
                 result_zip,
                 diagnostic_log,
                 stem_state,
+                stem_preview_state,
                 stem_editor,
                 stem_selector,
                 stem_preview,
                 mix_roles,
+                gain_vocals,
+                gain_drums,
+                gain_bass,
+                gain_guitar,
+                gain_piano,
+                gain_other,
+                mix_all,
+                mix_no_vocals,
+                mix_only_vocals,
+                mix_no_drums,
             ],
             concurrency_limit=1,
             show_progress="full",
@@ -729,7 +794,7 @@ def build_app(*, demo_mode: bool = False):
 
         stem_selector.change(
             lambda role, state: (state or {}).get(role),
-            inputs=[stem_selector, stem_state],
+            inputs=[stem_selector, stem_preview_state],
             outputs=stem_preview,
         )
 
