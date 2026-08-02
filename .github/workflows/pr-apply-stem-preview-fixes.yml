@@ -1,66 +1,15 @@
-name: PR apply stem preview fixes
+name: Manual stem preview patch check
 
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/pr-apply-stem-preview-fixes.yml"
-      - "scripts/apply_stem_preview_fixes.py"
-      - "src/audio_restoration_colab/**"
-      - "workers/separator_server.py"
-      - "tests/**"
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  patch-and-test:
+  verify-patch-script:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
     steps:
-      - name: Checkout source branch
-        uses: actions/checkout@v7.0.1
-        with:
-          ref: agent/fix-stem-labels-fast-previews
-          fetch-depth: 0
-
-      - name: Apply source patch
-        run: python scripts/apply_stem_preview_fixes.py
-
-      - name: Install test tools
-        uses: astral-sh/setup-uv@v9.0.0
-        with:
-          version: "0.12.1"
-          enable-cache: false
-
-      - name: Run focused checks
-        run: |
-          uv sync --group dev
-          uv run ruff check \
-            src/audio_restoration_colab/app.py \
-            src/audio_restoration_colab/jobs.py \
-            src/audio_restoration_colab/result_ui.py \
-            workers/separator_server.py \
-            tests/test_jobs.py \
-            tests/test_result_ui.py \
-            tests/test_separator_server.py
-          uv run pytest \
-            tests/test_jobs.py \
-            tests/test_result_ui.py \
-            tests/test_separator_server.py
-
-      - name: Commit source patch when needed
-        run: |
-          if git diff --quiet; then
-            echo 'No source patch to commit.'
-            exit 0
-          fi
-          git config user.name "audio-restoration-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add \
-            src/audio_restoration_colab/app.py \
-            workers/separator_server.py \
-            tests/test_jobs.py
-          git commit -m "Fix stem labels and dynamic fast previews"
-          git push
+      - uses: actions/checkout@v7.0.1
+      - name: Verify helper syntax
+        run: python -m py_compile scripts/apply_stem_preview_fixes.py
