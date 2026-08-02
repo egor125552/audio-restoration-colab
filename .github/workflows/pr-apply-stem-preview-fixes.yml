@@ -5,8 +5,8 @@ on:
     branches:
       - main
     paths:
-      - ".github/workflows/apply-stem-preview-fixes.yml"
       - ".github/workflows/pr-apply-stem-preview-fixes.yml"
+      - "scripts/apply_stem_preview_fixes.py"
       - "src/audio_restoration_colab/**"
       - "workers/separator_server.py"
       - "tests/**"
@@ -25,14 +25,8 @@ jobs:
           ref: agent/fix-stem-labels-fast-previews
           fetch-depth: 0
 
-      - name: Apply embedded exact patch once
-        run: |
-          if grep -Fq 'from .result_ui import build_result_layout' src/audio_restoration_colab/app.py; then
-            echo 'Source patch is already applied.'
-          else
-            python -c "from pathlib import Path; workflow=Path('.github/workflows/apply-stem-preview-fixes.yml').read_text(encoding='utf-8'); marker=\"          python - <<'PY'\n\"; start=workflow.index(marker)+len(marker); end=workflow.index(\"\n          PY\", start); lines=workflow[start:end].splitlines(); script='\n'.join(line[10:] if line.startswith('          ') else line for line in lines); target=Path('/tmp/apply-stem-preview-fixes.py'); target.write_text(script+'\n', encoding='utf-8'); compile(script, str(target), 'exec')"
-            python /tmp/apply-stem-preview-fixes.py
-          fi
+      - name: Apply source patch
+        run: python scripts/apply_stem_preview_fixes.py
 
       - name: Install test tools
         uses: astral-sh/setup-uv@v9.0.0
@@ -64,6 +58,9 @@ jobs:
           fi
           git config user.name "audio-restoration-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add src/audio_restoration_colab/app.py workers/separator_server.py
+          git add \
+            src/audio_restoration_colab/app.py \
+            workers/separator_server.py \
+            tests/test_jobs.py
           git commit -m "Fix stem labels and dynamic fast previews"
           git push
