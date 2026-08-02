@@ -92,6 +92,7 @@ class JobResult:
     message: str
     log_path: Path
     raw_results: tuple[ModelResult, ...]
+    preview_results: tuple[ModelResult, ...]
     stem_manifest: Path | None
 
 
@@ -122,10 +123,12 @@ class AudioJobService:
         job_dir = self._new_job_dir()
         input_dir = job_dir / "input"
         raw_dir = job_dir / "raw"
+        preview_dir = job_dir / "previews"
         formatted_dir = job_dir / "results"
         log_path = job_dir / "model.log"
         input_dir.mkdir(parents=True)
         raw_dir.mkdir()
+        preview_dir.mkdir()
         formatted_dir.mkdir()
         log_path.write_text(
             (
@@ -153,6 +156,14 @@ class AudioJobService:
             )
             if not raw_results:
                 raise ValueError("Модель не вернула ни одного файла.")
+
+            progress(0.77, "Создаю облегчённые MP3-превью…")
+            preview_results = _create_preview_results(
+                raw_results=raw_results,
+                preview_dir=preview_dir,
+                ffmpeg_runner=self.ffmpeg_runner,
+                log_path=log_path,
+            )
 
             extension = output_extension(format_choice, source)
             source_name = safe_stem(source.name)
@@ -194,17 +205,21 @@ class AudioJobService:
                 files=files,
                 archive=archive,
                 primary_preview=(
-                    raw_results[0].path if raw_results else None
+                    preview_results[0].path if preview_results else None
                 ),
                 secondary_preview=(
-                    raw_results[1].path if len(raw_results) > 1 else None
+                    preview_results[1].path
+                    if len(preview_results) > 1
+                    else None
                 ),
                 message=(
                     f"Готово: создано дорожек — {len(files)}. "
-                    "Их можно прослушивать, смешивать и скачать одним ZIP."
+                    "Для прослушивания используются облегчённые MP3-превью; "
+                    "полные файлы остаются без потери выбранного качества."
                 ),
                 log_path=log_path,
                 raw_results=tuple(raw_results),
+                preview_results=tuple(preview_results),
                 stem_manifest=stem_manifest,
             )
         except ValueError as error:
@@ -253,6 +268,51 @@ def validate_source(source: Path) -> Path:
             "M4A, AAC, OGG, OPUS, WMA или WEBM."
         )
     return resolved
+
+
+def _create_preview_results(
+    *,
+    raw_results: list[ModelResult],
+    preview_dir: Path,
+    ffmpeg_runner: FfmpegRunner,
+    log_path: Path,
+) -> list[ModelResult]:
+    previews: list[ModelResult] = []
+    for result in raw_results:
+        target = preview_dir / f"{result.role}.mp3"
+        command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(result.path),
+            "-vn",
+            "-map_metadata",
+            "-1",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "96k",
+            str(target),
+        ]
+        try:
+            ffmpeg_runner(command)
+            if not target.is_file():
+                raise ValueError("FFmpeg не создал MP3-превью.")
+        except ValueError as error:
+            _append_log(
+                log_path,
+                (
+                    "\nПРЕДУПРЕЖДЕНИЕ: облегчённое превью "
+                    f"для {result.role} не создано: {error}\n"
+                ),
+            )
+            previews.append(result)
+            continue
+        previews.append(ModelResult(role=result.role, path=target))
+    return previews
 
 
 def _write_stem_manifest(
