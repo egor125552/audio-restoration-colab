@@ -1,0 +1,533 @@
+name: Apply stem labels and fast previews
+
+on:
+  push:
+    branches:
+      - agent/fix-stem-labels-fast-previews
+    paths:
+      - ".github/workflows/apply-stem-preview-fixes.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: agent/fix-stem-labels-fast-previews
+          fetch-depth: 0
+
+      - name: Apply exact source patches
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path_text: str, old: str, new: str) -> None:
+              path = Path(path_text)
+              text = path.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(
+                      f"{path}: expected one exact match, found {count}"
+                  )
+              path.write_text(text.replace(old, new), encoding="utf-8")
+
+          replace_once(
+              "workers/separator_server.py",
+              "import os\nimport shutil\n",
+              "import os\nimport re\nimport shutil\n",
+          )
+
+          old_mapping = r'''def _canonicalize_outputs(
+              *,
+              paths: list[Path],
+              output_dir: Path,
+              expected_roles: tuple[str, ...],
+          ) -> dict[str, Path]:
+              assignments: dict[str, Path] = {}
+              unused = list(paths)
+              for role in expected_roles:
+                  matched = next(
+                      (
+                          path
+                          for path in unused
+                          if _matches_role(
+                              path=path,
+                              role=role,
+                              expected_roles=expected_roles,
+                          )
+                      ),
+                      None,
+                  )
+                  if matched is not None:
+                      assignments[role] = matched
+                      unused.remove(matched)
+
+              for role in expected_roles:
+                  if role not in assignments and unused:
+                      assignments[role] = unused.pop(0)
+
+              missing = [role for role in expected_roles if role not in assignments]
+              if missing:
+                  raise ValueError(
+                      "Модель не вернула ожидаемые дорожки: " + ", ".join(missing)
+                  )
+
+              canonical: dict[str, Path] = {}
+              for role, source in assignments.items():
+                  target = output_dir / f"{role}.wav"
+                  if source.resolve() != target.resolve():
+                      if target.exists():
+                          target.unlink()
+                      shutil.copy2(source, target)
+                  canonical[role] = target.resolve()
+              return canonical
+
+
+          def _matches_role(
+              *,
+              path: Path,
+              role: str,
+              expected_roles: tuple[str, ...],
+          ) -> bool:
+              name = path.stem.lower().replace("-", " ").replace("_", " ")
+              no_reverb = "no reverb" in name or "no echo" in name
+              aliases = {
+                  "vocals": ("vocals", "vocal"),
+                  "instrumental": ("instrumental", "karaoke", "no vocals", "novocals"),
+                  "drums": ("drums", "drum"),
+                  "bass": ("bass",),
+                  "guitar": ("guitar",),
+                  "piano": ("piano", "keys"),
+                  "other": ("other", "non vocals"),
+                  "dry": ("dry", "dereverb", "no reverb", "no echo"),
+                  "reverb": ("reverb", "echo"),
+                  "clean": ("clean", "dry", "no bleed", "no aspiration", "no noise"),
+                  "bleed": ("bleed",),
+                  "breaths": ("aspiration", "breath"),
+                  "kick": ("kick", "bombo"),
+                  "snare": ("snare", "redoblante"),
+                  "toms": ("toms", "tom"),
+                  "cymbals": ("cymbals", "platillos"),
+                  "hihat": ("hihat", "hi hat", "hh"),
+                  "ride": ("ride",),
+                  "crash": ("crash",),
+                  "speech": ("speech", "dialog", "dialogue"),
+                  "music": ("music",),
+                  "sfx": ("sfx", "effect"),
+              }
+              if role == "reverb" and no_reverb:
+                  return False
+              if role == "instrumental" and "other" in name:
+                  return "other" not in expected_roles
+              return any(alias in name for alias in aliases.get(role, (role,)))
+          '''
+
+          new_mapping = r'''def _canonicalize_outputs(
+              *,
+              paths: list[Path],
+              output_dir: Path,
+              expected_roles: tuple[str, ...],
+          ) -> dict[str, Path]:
+              assignments: dict[str, Path] = {}
+              unused = list(paths)
+              for role in expected_roles:
+                  matched = next(
+                      (
+                          path
+                          for path in unused
+                          if _matches_role(
+                              path=path,
+                              role=role,
+                              expected_roles=expected_roles,
+                          )
+                      ),
+                      None,
+                  )
+                  if matched is not None:
+                      assignments[role] = matched
+                      unused.remove(matched)
+
+              if len(expected_roles) == 1 and not assignments and unused:
+                  assignments[expected_roles[0]] = unused.pop(0)
+
+              missing = [role for role in expected_roles if role not in assignments]
+              if missing:
+                  filenames = ", ".join(path.name for path in paths)
+                  raise ValueError(
+                      "Не удалось определить роли дорожек "
+                      + ", ".join(missing)
+                      + f". Получены файлы: {filenames}"
+                  )
+
+              canonical: dict[str, Path] = {}
+              for role, source in assignments.items():
+                  target = output_dir / f"{role}.wav"
+                  if source.resolve() != target.resolve():
+                      if target.exists():
+                          target.unlink()
+                      shutil.copy2(source, target)
+                  canonical[role] = target.resolve()
+              return canonical
+
+
+          def _matches_role(
+              *,
+              path: Path,
+              role: str,
+              expected_roles: tuple[str, ...],
+          ) -> bool:
+              label = _output_role_label(path)
+              aliases = {
+                  "vocals": {"vocals", "vocal", "voice"},
+                  "instrumental": {
+                      "instrumental",
+                      "karaoke",
+                      "no vocals",
+                      "no vocal",
+                      "novocals",
+                  },
+                  "drums": {"drums", "drum"},
+                  "bass": {"bass"},
+                  "guitar": {"guitar"},
+                  "piano": {"piano", "keys"},
+                  "other": {"other", "non vocals"},
+                  "dry": {"dry", "dereverb", "no reverb", "no echo"},
+                  "reverb": {"reverb", "echo"},
+                  "clean": {
+                      "clean",
+                      "dry",
+                      "no bleed",
+                      "no aspiration",
+                      "no noise",
+                  },
+                  "bleed": {"bleed"},
+                  "breaths": {"aspiration", "breath", "breaths"},
+                  "kick": {"kick", "bombo"},
+                  "snare": {"snare", "redoblante"},
+                  "toms": {"toms", "tom"},
+                  "cymbals": {"cymbals", "platillos"},
+                  "hihat": {"hihat", "hi hat", "hh"},
+                  "ride": {"ride"},
+                  "crash": {"crash"},
+                  "speech": {"speech", "dialog", "dialogue"},
+                  "music": {"music"},
+                  "sfx": {"sfx", "effect", "effects"},
+              }
+              if role == "instrumental" and label == "other":
+                  return "other" not in expected_roles
+              return label in aliases.get(role, {role})
+
+
+          def _output_role_label(path: Path) -> str:
+              groups = re.findall(r"\(([^()]*)\)", path.stem)
+              if groups:
+                  return _normalize_role_label(groups[-1])
+
+              label = _normalize_role_label(path.stem)
+              for prefix in ("input ", "output ", "stem "):
+                  if label.startswith(prefix):
+                      return label[len(prefix) :]
+              return label
+
+
+          def _normalize_role_label(value: str) -> str:
+              return " ".join(
+                  re.sub(r"[^a-z0-9]+", " ", value.lower()).split()
+              )
+          '''
+          replace_once(
+              "workers/separator_server.py",
+              old_mapping,
+              new_mapping,
+          )
+
+          replace_once(
+              "src/audio_restoration_colab/app.py",
+              "from .mixer import build_mix\nfrom .runtime import ModelResult, RouterWorker, RuntimeLayout\n",
+              "from .mixer import build_mix\nfrom .result_ui import build_result_layout\nfrom .runtime import ModelResult, RouterWorker, RuntimeLayout\n",
+          )
+          replace_once(
+              "src/audio_restoration_colab/app.py",
+              "        stem_state = gr.State({})\n",
+              "        stem_state = gr.State({})\n        stem_preview_state = gr.State({})\n",
+          )
+          replace_once(
+              "src/audio_restoration_colab/app.py",
+              "                \"Инференс повторно не запускается. Здесь используются уже \"\n                \"готовые WAV-дорожки. Горячие клавиши вне полей ввода: \"\n",
+              "                \"Инференс повторно не запускается. Для микса используются \"\n                \"полные дорожки, а для прослушивания — облегчённые MP3-превью. \"\n                \"Горячие клавиши вне полей ввода: \"\n",
+          )
+
+          old_process = r'''            except JobProcessingError as error:
+                  status_html = (
+                      "<div role='status' aria-live='assertive'><strong>Ошибка: "
+                      + html.escape(str(error))
+                      + "</strong><br>Полный лог сохранён ниже и одновременно "
+                      "выведен в консоль Colab.</div>"
+                  )
+                  return (
+                      status_html,
+                      None,
+                      None,
+                      [],
+                      None,
+                      str(error.log_path),
+                      {},
+                      gr.update(visible=False),
+                      gr.update(choices=[], value=None),
+                      None,
+                      gr.update(choices=[], value=[]),
+                  )
+              except ValueError as error:
+                  raise gr.Error(str(error)) from error
+
+              payload = {
+                  item.role: str(item.path) for item in result.raw_results
+              }
+              choices = [
+                  (ROLE_TITLES.get(role, role), role) for role in payload
+              ]
+              first_role = next(iter(payload), None)
+              editor_visible = len(payload) > 1
+              status_html = (
+                  "<div role='status' aria-live='polite'><strong>"
+                  + html.escape(result.message)
+                  + "</strong></div>"
+              )
+              return (
+                  status_html,
+                  _path_or_none(result.primary_preview),
+                  _path_or_none(result.secondary_preview),
+                  [str(path) for path in result.files],
+                  str(result.archive),
+                  str(result.log_path),
+                  payload,
+                  gr.update(visible=editor_visible),
+                  gr.update(choices=choices, value=first_role),
+                  payload.get(first_role) if first_role else None,
+                  gr.update(
+                      choices=choices,
+                      value=list(payload),
+                  ),
+              )
+
+          run_button.click(
+              process_audio,
+              inputs=[
+                  input_file,
+                  model_dropdown,
+                  output_format,
+                  settings_state,
+              ],
+              outputs=[
+                  status,
+                  primary_preview,
+                  secondary_preview,
+                  result_files,
+                  result_zip,
+                  diagnostic_log,
+                  stem_state,
+                  stem_editor,
+                  stem_selector,
+                  stem_preview,
+                  mix_roles,
+              ],
+              concurrency_limit=1,
+              show_progress="full",
+          )
+
+          stem_selector.change(
+              lambda role, state: (state or {}).get(role),
+              inputs=[stem_selector, stem_state],
+              outputs=stem_preview,
+          )
+          '''
+
+          new_process = r'''            except JobProcessingError as error:
+                  status_html = (
+                      "<div role='status' aria-live='assertive'><strong>Ошибка: "
+                      + html.escape(str(error))
+                      + "</strong><br>Полный лог сохранён ниже и одновременно "
+                      "выведен в консоль Colab.</div>"
+                  )
+                  hidden = gr.update(visible=False)
+                  return (
+                      status_html,
+                      gr.update(value=None, visible=False),
+                      gr.update(value=None, visible=False),
+                      [],
+                      None,
+                      str(error.log_path),
+                      {},
+                      {},
+                      hidden,
+                      gr.update(choices=[], value=None),
+                      None,
+                      gr.update(choices=[], value=[]),
+                      hidden,
+                      hidden,
+                      hidden,
+                      hidden,
+                      hidden,
+                      gr.update(visible=False, label="Остальное, %"),
+                      hidden,
+                      hidden,
+                      hidden,
+                      hidden,
+                  )
+              except ValueError as error:
+                  raise gr.Error(str(error)) from error
+
+              payload = {
+                  item.role: str(item.path) for item in result.raw_results
+              }
+              preview_payload = {
+                  item.role: str(item.path)
+                  for item in result.preview_results
+              }
+              roles = list(payload)
+              layout = build_result_layout(roles)
+              first_role = roles[0] if roles else None
+              primary_role = roles[0] if roles else None
+              secondary_role = roles[1] if len(roles) > 1 else None
+              status_html = (
+                  "<div role='status' aria-live='polite'><strong>"
+                  + html.escape(result.message)
+                  + "</strong></div>"
+              )
+              return (
+                  status_html,
+                  gr.update(
+                      value=preview_payload.get(primary_role),
+                      label=(
+                          "Быстрое превью: "
+                          + ROLE_TITLES.get(primary_role, primary_role)
+                          if primary_role
+                          else "Основной результат"
+                      ),
+                      visible=primary_role is not None,
+                  ),
+                  gr.update(
+                      value=preview_payload.get(secondary_role),
+                      label=(
+                          "Быстрое превью: "
+                          + ROLE_TITLES.get(secondary_role, secondary_role)
+                          if secondary_role
+                          else "Второй результат"
+                      ),
+                      visible=secondary_role is not None,
+                  ),
+                  [str(path) for path in result.files],
+                  str(result.archive),
+                  str(result.log_path),
+                  payload,
+                  preview_payload,
+                  gr.update(visible=layout.editor_visible),
+                  gr.update(
+                      choices=list(layout.choices),
+                      value=first_role,
+                  ),
+                  preview_payload.get(first_role) if first_role else None,
+                  gr.update(
+                      choices=list(layout.choices),
+                      value=roles,
+                  ),
+                  gr.update(visible=layout.gain_visibility["vocals"]),
+                  gr.update(visible=layout.gain_visibility["drums"]),
+                  gr.update(visible=layout.gain_visibility["bass"]),
+                  gr.update(visible=layout.gain_visibility["guitar"]),
+                  gr.update(visible=layout.gain_visibility["piano"]),
+                  gr.update(
+                      visible=layout.gain_visibility["other"],
+                      label=layout.other_gain_label,
+                  ),
+                  gr.update(visible=layout.show_all_preset),
+                  gr.update(visible=layout.show_no_vocals_preset),
+                  gr.update(visible=layout.show_only_vocals_preset),
+                  gr.update(visible=layout.show_no_drums_preset),
+              )
+
+          run_button.click(
+              process_audio,
+              inputs=[
+                  input_file,
+                  model_dropdown,
+                  output_format,
+                  settings_state,
+              ],
+              outputs=[
+                  status,
+                  primary_preview,
+                  secondary_preview,
+                  result_files,
+                  result_zip,
+                  diagnostic_log,
+                  stem_state,
+                  stem_preview_state,
+                  stem_editor,
+                  stem_selector,
+                  stem_preview,
+                  mix_roles,
+                  gain_vocals,
+                  gain_drums,
+                  gain_bass,
+                  gain_guitar,
+                  gain_piano,
+                  gain_other,
+                  mix_all,
+                  mix_no_vocals,
+                  mix_only_vocals,
+                  mix_no_drums,
+              ],
+              concurrency_limit=1,
+              show_progress="full",
+          )
+
+          stem_selector.change(
+              lambda role, state: (state or {}).get(role),
+              inputs=[stem_selector, stem_preview_state],
+              outputs=stem_preview,
+          )
+          '''
+          replace_once(
+              "src/audio_restoration_colab/app.py",
+              old_process,
+              new_process,
+          )
+          PY
+
+      - name: Install test tools
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: "0.12.1"
+          enable-cache: false
+
+      - name: Run focused checks
+        run: |
+          uv sync --group dev
+          uv run ruff check \
+            src/audio_restoration_colab/app.py \
+            src/audio_restoration_colab/jobs.py \
+            src/audio_restoration_colab/result_ui.py \
+            workers/separator_server.py \
+            tests/test_jobs.py \
+            tests/test_result_ui.py \
+            tests/test_separator_server.py
+          uv run pytest \
+            tests/test_jobs.py \
+            tests/test_result_ui.py \
+            tests/test_separator_server.py
+
+      - name: Commit patched sources
+        run: |
+          git config user.name "audio-restoration-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            src/audio_restoration_colab/app.py \
+            workers/separator_server.py
+          git commit -m "Fix stem labels and dynamic fast previews"
+          git push
