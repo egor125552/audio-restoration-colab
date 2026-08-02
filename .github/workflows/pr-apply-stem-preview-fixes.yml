@@ -30,24 +30,7 @@ jobs:
           if grep -Fq 'from .result_ui import build_result_layout' src/audio_restoration_colab/app.py; then
             echo 'Source patch is already applied.'
           else
-            python - <<'PY'
-            from pathlib import Path
-
-            workflow = Path(
-                '.github/workflows/apply-stem-preview-fixes.yml'
-            ).read_text(encoding='utf-8')
-            marker = "          python - <<'PY'\n"
-            start = workflow.index(marker) + len(marker)
-            end = workflow.index("\n          PY", start)
-            lines = workflow[start:end].splitlines()
-            script = "\n".join(
-                line[10:] if line.startswith("          ") else line
-                for line in lines
-            )
-            target = Path('/tmp/apply-stem-preview-fixes.py')
-            target.write_text(script + "\n", encoding='utf-8')
-            compile(script, str(target), 'exec')
-            PY
+            python -c "from pathlib import Path; workflow=Path('.github/workflows/apply-stem-preview-fixes.yml').read_text(encoding='utf-8'); marker=\"          python - <<'PY'\n\"; start=workflow.index(marker)+len(marker); end=workflow.index(\"\n          PY\", start); lines=workflow[start:end].splitlines(); script='\n'.join(line[10:] if line.startswith('          ') else line for line in lines); target=Path('/tmp/apply-stem-preview-fixes.py'); target.write_text(script+'\n', encoding='utf-8'); compile(script, str(target), 'exec')"
             python /tmp/apply-stem-preview-fixes.py
           fi
 
