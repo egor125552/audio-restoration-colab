@@ -77,10 +77,16 @@ class JobTests(unittest.TestCase):
             source.write_bytes(b"input")
             worker = FakeWorker()
             messages: list[str] = []
+            commands: list[list[str]] = []
+
+            def tracking_ffmpeg(command: list[str]) -> None:
+                commands.append(command)
+                fake_ffmpeg(command)
+
             service = AudioJobService(
                 jobs_root=root / "jobs",
                 worker=worker,
-                ffmpeg_runner=fake_ffmpeg,
+                ffmpeg_runner=tracking_ffmpeg,
             )
 
             result = service.process(
@@ -103,9 +109,28 @@ class JobTests(unittest.TestCase):
             self.assertTrue(all(path.suffix == ".mp3" for path in result.files))
             self.assertTrue(result.archive.is_file())
             self.assertTrue(result.log_path.is_file())
-            self.assertEqual(result.primary_preview.suffix, ".wav")
-            self.assertEqual(result.secondary_preview.suffix, ".wav")
-            self.assertNotEqual(result.primary_preview, result.files[0])
+            self.assertEqual(result.primary_preview.suffix, ".mp3")
+            self.assertEqual(result.secondary_preview.suffix, ".mp3")
+            self.assertEqual(
+                [item.role for item in result.preview_results],
+                ["clean", "noise"],
+            )
+            self.assertTrue(
+                all(
+                    item.path.parent.name == "previews"
+                    for item in result.preview_results
+                )
+            )
+            preview_commands = [
+                command for command in commands if "-b:a" in command
+            ]
+            self.assertEqual(len(preview_commands), 2)
+            self.assertTrue(
+                all(
+                    command[command.index("-b:a") + 1] == "96k"
+                    for command in preview_commands
+                )
+            )
             self.assertIn("Готово", messages[-1])
             self.assertIn(
                 "обработка завершена успешно",
@@ -142,8 +167,39 @@ class JobTests(unittest.TestCase):
             self.assertEqual(worker.received_source.suffix, ".wav")
             self.assertEqual(Path(commands[0][-1]).suffix, ".wav")
             self.assertTrue(all(path.suffix == ".m4a" for path in result.files))
+            self.assertEqual(result.primary_preview.suffix, ".mp3")
+            self.assertEqual(result.secondary_preview.suffix, ".mp3")
+
+    def test_preview_failure_falls_back_to_raw_wav(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "speech.wav"
+            source.write_bytes(b"input")
+            worker = FakeWorker()
+
+            def ffmpeg_with_preview_failure(command: list[str]) -> None:
+                if "-b:a" in command:
+                    raise ValueError("encoder unavailable")
+                fake_ffmpeg(command)
+
+            service = AudioJobService(
+                jobs_root=root / "jobs",
+                worker=worker,
+                ffmpeg_runner=ffmpeg_with_preview_failure,
+            )
+            result = service.process(
+                source=source,
+                model_id="denoise_normal",
+                format_choice="wav",
+                raw_settings={},
+                progress=lambda _fraction, _message: None,
+            )
+
             self.assertEqual(result.primary_preview.suffix, ".wav")
-            self.assertEqual(result.secondary_preview.suffix, ".wav")
+            self.assertIn(
+                "облегчённое превью",
+                result.log_path.read_text(encoding="utf-8"),
+            )
 
     def test_failed_job_keeps_downloadable_log(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
