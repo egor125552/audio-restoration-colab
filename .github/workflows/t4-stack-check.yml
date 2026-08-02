@@ -1,0 +1,107 @@
+name: Проверка стека AudioSR TensorRT
+
+on:
+  pull_request:
+    paths:
+      - "scripts/prepare_audiosr_t4.sh"
+      - "scripts/probe_audiosr_t4.py"
+      - "scripts/check_audiosr_unet_export.py"
+      - "tests/test_audiosr_t4_probe.py"
+      - ".github/workflows/t4-stack-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audiosr-t4-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stack:
+    name: Установка, API и граф без GPU
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Получить код
+        uses: actions/checkout@v7.0.1
+
+      - name: Включить тот же uv, что использует Colab-блокнот
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: "0.12.0"
+          enable-cache: false
+
+      - name: Установить тот же стек, что будет в Colab
+        env:
+          AUDIO_RESTORATION_T4_STACK_CHECK: "1"
+          MPLBACKEND: "module://matplotlib_inline.backend_inline"
+        run: bash scripts/prepare_audiosr_t4.sh /tmp/audio-restoration-t4-stack
+
+      - name: Проверить API закреплённого AudioSR
+        run: |
+          /tmp/audio-restoration-t4-stack/envs/audiosr_trt/bin/python - <<'PY'
+          import inspect
+
+          from audiosr.latent_diffusion.modules import attention
+          from audiosr.latent_diffusion.modules.diffusionmodules import openaimodel
+
+          expected = ["func", "inputs", "params", "flag"]
+          for module in (attention, openaimodel):
+              actual = list(inspect.signature(module.checkpoint).parameters)
+              if actual != expected:
+                  raise SystemExit(
+                      f"Неожиданная сигнатура checkpoint в {module.__name__}: "
+                      f"{actual!r}"
+                  )
+          print("AudioSR checkpoint API совпадает с probe-wrapper.")
+          PY
+
+      - name: Проверить опции Torch-TensorRT без GPU-импорта
+        run: |
+          /tmp/audio-restoration-t4-stack/envs/audiosr_trt/bin/python - <<'PY'
+          import importlib.metadata
+          from pathlib import Path
+
+          distribution = importlib.metadata.distribution("torch-tensorrt")
+          root = Path(distribution.locate_file(""))
+          source_files = list((root / "torch_tensorrt").rglob("*.py"))
+          source = "\n".join(
+              path.read_text(encoding="utf-8", errors="replace")
+              for path in source_files
+          )
+          required = {
+              "enabled_precisions",
+              "min_block_size",
+              "optimization_level",
+              "truncate_double",
+              "use_python_runtime",
+              "pass_through_build_failures",
+          }
+          missing = sorted(option for option in required if option not in source)
+          if missing:
+              raise SystemExit(
+                  "В установленном Torch-TensorRT не найдены опции: "
+                  + ", ".join(missing)
+              )
+          print("Torch-TensorRT содержит все опции, используемые probe.")
+          PY
+
+      - name: Захватить реальный AudioSR UNet на meta-тензорах
+        run: |
+          /tmp/audio-restoration-t4-stack/envs/audiosr_trt/bin/python \
+            scripts/check_audiosr_unet_export.py
+
+      - name: Проверить CLI probe при Colab matplotlib backend
+        env:
+          MPLBACKEND: "module://matplotlib_inline.backend_inline"
+        run: |
+          /tmp/audio-restoration-t4-stack/envs/audiosr_trt/bin/python \
+            scripts/probe_audiosr_t4.py --help
+
+      - name: Проверить синтаксис скриптов
+        run: |
+          bash -n scripts/prepare_audiosr_t4.sh
+          python -m py_compile \
+            scripts/probe_audiosr_t4.py \
+            scripts/check_audiosr_unet_export.py
