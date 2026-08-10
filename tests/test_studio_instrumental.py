@@ -27,7 +27,9 @@ def test_studio_instrumental_is_next_to_clean_mode() -> None:
     assert "медиан" in model.description.lower()
 
 
-def test_studio_preset_expands_to_three_models(monkeypatch) -> None:
+def test_studio_preset_expands_to_three_models_and_releases_previous(
+    monkeypatch,
+) -> None:
     audio_separator_module = types.ModuleType("audio_separator")
     audio_separator_module.__path__ = []
     separator_module = types.ModuleType("audio_separator.separator")
@@ -40,6 +42,13 @@ def test_studio_preset_expands_to_three_models(monkeypatch) -> None:
         "audio_separator.separator.architectures.mdxc_separator"
     )
 
+    class FakeLoadedModel:
+        def __init__(self) -> None:
+            self.cache_cleared = False
+
+        def clear_gpu_cache(self) -> None:
+            self.cache_cleared = True
+
     class FakeSeparator:
         def __init__(self, *args, **kwargs) -> None:
             self.received_args = args
@@ -48,6 +57,13 @@ def test_studio_preset_expands_to_three_models(monkeypatch) -> None:
             self.ensemble_algorithm = kwargs.get("ensemble_algorithm")
             self.ensemble_weights = kwargs.get("ensemble_weights")
             self._ensemble_preset_models = None
+            self.model_instance = None
+            self.loaded_model = None
+
+        def load_model(self, model_filename=None) -> None:
+            self.loaded_model = model_filename
+            if model_filename is not None:
+                self.model_instance = FakeLoadedModel()
 
     class FakeMDXCSeparator:
         def demix(self, mix):
@@ -93,6 +109,17 @@ def test_studio_preset_expands_to_three_models(monkeypatch) -> None:
     assert studio._ensemble_preset_models == list(STUDIO_INSTRUMENTAL_MODELS)
     assert len(studio._ensemble_preset_models) == 3
 
+    previous = FakeLoadedModel()
+    studio.model_instance = previous
+    studio.load_model(STUDIO_INSTRUMENTAL_MODELS[1])
+    assert previous.cache_cleared is True
+    assert studio.loaded_model == STUDIO_INSTRUMENTAL_MODELS[1]
+    assert studio.model_instance is not previous
+
     regular = FakeSeparator(ensemble_preset="instrumental_clean")
     assert regular.received_kwargs["ensemble_preset"] == "instrumental_clean"
     assert regular._ensemble_preset_models is None
+    regular_previous = FakeLoadedModel()
+    regular.model_instance = regular_previous
+    regular.load_model("some-other-model.ckpt")
+    assert regular_previous.cache_cleared is False
