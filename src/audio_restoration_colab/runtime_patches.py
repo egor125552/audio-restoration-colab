@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from typing import Any
 
+from .studio_instrumental import (
+    STUDIO_INSTRUMENTAL_ALGORITHM,
+    STUDIO_INSTRUMENTAL_MODELS,
+    STUDIO_INSTRUMENTAL_PRESET,
+)
+
 _INIT_PATCH_MARKER = "_audio_restoration_native_roformer_segments"
 _DEMIX_PATCH_MARKER = "_audio_restoration_safe_short_roformer"
 
 
 def apply_audio_separator_quality_patches() -> None:
-    """Preserve native RoFormer quality and handle clips shorter than a window.
+    """Preserve native RoFormer quality and add the studio ensemble.
 
     RoFormer checkpoints are trained with model-specific ``dim_t`` and STFT hop
     lengths, so their native temporal configuration must not be replaced by the
@@ -16,6 +22,11 @@ def apply_audio_separator_quality_patches() -> None:
     then computes a negative overlap-add start for very short clips. We pad only
     that internal model call past one complete native window and crop its stems
     back before audio-separator continues. Normal songs are untouched.
+
+    ``instrumental_studio`` is a project-local preset. audio-separator already
+    knows how to run arbitrary model lists sequentially and ensemble the output,
+    so the patch translates that preset into three RoFormer checkpoints using
+    ``median_fft`` without modifying the installed package data.
     """
 
     try:
@@ -30,10 +41,24 @@ def apply_audio_separator_quality_patches() -> None:
     if not getattr(original_init, _INIT_PATCH_MARKER, False):
 
         def patched_init(self, *args: Any, **kwargs: Any) -> None:
+            studio_requested = (
+                kwargs.get("ensemble_preset") == STUDIO_INSTRUMENTAL_PRESET
+            )
+            if studio_requested:
+                kwargs["ensemble_preset"] = None
+                kwargs["ensemble_algorithm"] = STUDIO_INSTRUMENTAL_ALGORITHM
+                kwargs["ensemble_weights"] = None
+
             mdxc_params = dict(kwargs.get("mdxc_params") or {})
             mdxc_params["override_model_segment_size"] = False
             kwargs["mdxc_params"] = mdxc_params
             original_init(self, *args, **kwargs)
+
+            if studio_requested:
+                self.ensemble_preset = STUDIO_INSTRUMENTAL_PRESET
+                self.ensemble_algorithm = STUDIO_INSTRUMENTAL_ALGORITHM
+                self.ensemble_weights = None
+                self._ensemble_preset_models = list(STUDIO_INSTRUMENTAL_MODELS)
 
         setattr(patched_init, _INIT_PATCH_MARKER, True)
         Separator.__init__ = patched_init
