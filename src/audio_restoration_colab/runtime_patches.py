@@ -12,6 +12,7 @@ from .studio_instrumental import (
 _INIT_PATCH_MARKER = "_audio_restoration_native_roformer_segments"
 _LOAD_MODEL_PATCH_MARKER = "_audio_restoration_studio_release_between_models"
 _DEMIX_PATCH_MARKER = "_audio_restoration_safe_short_roformer"
+_LOAD_MODEL_DEFAULT = object()
 
 
 def apply_audio_separator_quality_patches() -> None:
@@ -70,9 +71,14 @@ def apply_audio_separator_quality_patches() -> None:
     original_load_model = Separator.load_model
     if not getattr(original_load_model, _LOAD_MODEL_PATCH_MARKER, False):
 
-        def patched_load_model(self, model_filename=None) -> None:
+        def patched_load_model(
+            self,
+            model_filename: Any = _LOAD_MODEL_DEFAULT,
+        ) -> None:
+            explicit_model = model_filename is not _LOAD_MODEL_DEFAULT
             is_studio_switch = (
                 self.ensemble_preset == STUDIO_INSTRUMENTAL_PRESET
+                and explicit_model
                 and model_filename is not None
                 and self.model_instance is not None
             )
@@ -91,6 +97,9 @@ def apply_audio_separator_quality_patches() -> None:
                         torch.cuda.empty_cache()
                 except ImportError:
                     pass
+
+            if not explicit_model:
+                return original_load_model(self)
             return original_load_model(self, model_filename)
 
         setattr(patched_load_model, _LOAD_MODEL_PATCH_MARKER, True)
