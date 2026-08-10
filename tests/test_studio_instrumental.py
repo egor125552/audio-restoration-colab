@@ -41,6 +41,7 @@ def test_studio_preset_expands_to_three_models_and_releases_previous(
     mdxc_module = types.ModuleType(
         "audio_separator.separator.architectures.mdxc_separator"
     )
+    default_model = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
 
     class FakeLoadedModel:
         def __init__(self) -> None:
@@ -60,8 +61,15 @@ def test_studio_preset_expands_to_three_models_and_releases_previous(
             self.model_instance = None
             self.loaded_model = None
 
-        def load_model(self, model_filename=None) -> None:
+        def load_model(self, model_filename=default_model) -> None:
+            if (
+                self._ensemble_preset_models is not None
+                and model_filename == default_model
+            ):
+                model_filename = list(self._ensemble_preset_models)
             self.loaded_model = model_filename
+            if isinstance(model_filename, list):
+                return
             if model_filename is not None:
                 self.model_instance = FakeLoadedModel()
 
@@ -108,6 +116,12 @@ def test_studio_preset_expands_to_three_models_and_releases_previous(
     assert studio.ensemble_weights is None
     assert studio._ensemble_preset_models == list(STUDIO_INSTRUMENTAL_MODELS)
     assert len(studio._ensemble_preset_models) == 3
+
+    # The real worker calls load_model() without arguments for an ensemble.
+    # Keep that default call intact so audio-separator expands the preset list.
+    studio.load_model()
+    assert studio.loaded_model == list(STUDIO_INSTRUMENTAL_MODELS)
+    assert studio.model_instance is None
 
     previous = FakeLoadedModel()
     studio.model_instance = previous
