@@ -122,6 +122,12 @@ def test_russian_interface_and_model_switching(page: Page) -> None:
             exact=False,
         )
     ).to_be_visible()
+    expect(
+        page.get_by_text(
+            "модели ансамбля переключаются по очереди",
+            exact=False,
+        )
+    ).to_be_visible()
 
     artifact_dir = Path("test-artifacts")
     artifact_dir.mkdir(exist_ok=True)
