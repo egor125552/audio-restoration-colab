@@ -15,7 +15,7 @@ esac
 if command -v uv >/dev/null 2>&1; then
   UV_BIN="$(command -v uv)"
 elif [[ -x /root/.local/bin/uv ]]; then
-  UV_BIN="/root/.local/bin/uv"
+  UV_BIN=/root/.local/bin/uv
 else
   echo "uv не найден. Сначала выполни установочную ячейку Colab." >&2
   exit 3
@@ -71,6 +71,9 @@ verify_top_separator_models() {
     "dereverb_echo_mbr_fused.ckpt"
     "mel_band_roformer_bleed_suppressor_v1.ckpt"
     "aspiration_mel_band_roformer_less_aggr_sdr_18.1201.ckpt"
+    "mel_band_roformer_instrumental_fv7z_gabox.ckpt"
+    "bs_roformer_instrumental_resurrection_unwa.ckpt"
+    "mel_band_roformer_instrumental_becruily.ckpt"
   )
   local required_presets=(
     "vocal_balanced"
