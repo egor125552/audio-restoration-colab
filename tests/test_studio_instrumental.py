@@ -85,7 +85,8 @@ def test_studio_preset_expands_to_three_models(monkeypatch) -> None:
     assert studio.received_kwargs["ensemble_preset"] is None
     assert studio.received_kwargs["ensemble_algorithm"] == "median_fft"
     assert studio.received_kwargs["ensemble_weights"] is None
-    assert studio.received_kwargs["mdxc_params"]["override_model_segment_size"] is False
+    mdxc_params = studio.received_kwargs["mdxc_params"]
+    assert mdxc_params["override_model_segment_size"] is False
     assert studio.ensemble_preset == STUDIO_INSTRUMENTAL_PRESET
     assert studio.ensemble_algorithm == STUDIO_INSTRUMENTAL_ALGORITHM
     assert studio.ensemble_weights is None
