@@ -124,7 +124,13 @@ def test_russian_interface_and_model_switching(page: Page) -> None:
     ).to_be_visible()
     expect(
         page.get_by_text(
-            "модели ансамбля переключаются по очереди",
+            "Три модели запускаются по очереди",
+            exact=False,
+        )
+    ).to_be_visible()
+    expect(
+        page.get_by_text(
+            "предыдущая явно освобождается из памяти",
             exact=False,
         )
     ).to_be_visible()
@@ -139,7 +145,7 @@ def test_russian_interface_and_model_switching(page: Page) -> None:
 
 
 def _create_test_wave(path: Path) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(exist_ok=True, parents=True)
     with wave.open(str(path), "wb") as audio:
         audio.setnchannels(1)
         audio.setsampwidth(2)
