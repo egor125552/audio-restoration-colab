@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 from typing import Any
 
 from .studio_instrumental import (
@@ -9,6 +10,7 @@ from .studio_instrumental import (
 )
 
 _INIT_PATCH_MARKER = "_audio_restoration_native_roformer_segments"
+_LOAD_MODEL_PATCH_MARKER = "_audio_restoration_studio_release_between_models"
 _DEMIX_PATCH_MARKER = "_audio_restoration_safe_short_roformer"
 
 
@@ -26,7 +28,9 @@ def apply_audio_separator_quality_patches() -> None:
     ``instrumental_studio`` is a project-local preset. audio-separator already
     knows how to run arbitrary model lists sequentially and ensemble the output,
     so the patch translates that preset into three RoFormer checkpoints using
-    ``median_fft`` without modifying the installed package data.
+    ``median_fft`` without modifying the installed package data. Before each
+    next studio model is loaded, the previous model object is explicitly
+    released so two checkpoints do not need to coexist in VRAM during a switch.
     """
 
     try:
@@ -63,40 +67,68 @@ def apply_audio_separator_quality_patches() -> None:
         setattr(patched_init, _INIT_PATCH_MARKER, True)
         Separator.__init__ = patched_init
 
+    original_load_model = Separator.load_model
+    if not getattr(original_load_model, _LOAD_MODEL_PATCH_MARKER, False):
+
+        def patched_load_model(self, model_filename=None) -> None:
+            is_studio_switch = (
+                self.ensemble_preset == STUDIO_INSTRUMENTAL_PRESET
+                and model_filename is not None
+                and self.model_instance is not None
+            )
+            if is_studio_switch:
+                previous_model = self.model_instance
+                self.model_instance = None
+                clear_cache = getattr(previous_model, "clear_gpu_cache", None)
+                if callable(clear_cache):
+                    clear_cache()
+                del previous_model
+                gc.collect()
+                try:
+                    import torch
+
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except ImportError:
+                    pass
+            return original_load_model(self, model_filename)
+
+        setattr(patched_load_model, _LOAD_MODEL_PATCH_MARKER, True)
+        Separator.load_model = patched_load_model
+
     original_demix = MDXCSeparator.demix
-    if getattr(original_demix, _DEMIX_PATCH_MARKER, False):
-        return
+    if not getattr(original_demix, _DEMIX_PATCH_MARKER, False):
 
-    def patched_demix(self, mix):
-        if not getattr(self, "is_roformer", False):
-            return original_demix(self, mix)
+        def patched_demix(self, mix):
+            if not getattr(self, "is_roformer", False):
+                return original_demix(self, mix)
 
-        config = self.model_data_cfgdict
-        model_config = config.model
-        hop_length = getattr(model_config, "stft_hop_length", None)
-        if hop_length is None:
-            hop_length = config.audio.hop_length
-        chunk_size = int(hop_length) * (int(config.inference.dim_t) - 1)
-        original_length = int(mix.shape[-1])
-        if original_length > chunk_size:
-            return original_demix(self, mix)
+            config = self.model_data_cfgdict
+            model_config = config.model
+            hop_length = getattr(model_config, "stft_hop_length", None)
+            if hop_length is None:
+                hop_length = config.audio.hop_length
+            chunk_size = int(hop_length) * (int(config.inference.dim_t) - 1)
+            original_length = int(mix.shape[-1])
+            if original_length > chunk_size:
+                return original_demix(self, mix)
 
-        import numpy as np
+            import numpy as np
 
-        sample_rate = max(1, int(config.audio.sample_rate))
-        target_length = chunk_size + sample_rate
-        padded_mix = np.pad(
-            mix,
-            ((0, 0), (0, target_length - original_length)),
-            mode="constant",
-        )
-        separated = original_demix(self, padded_mix)
-        if isinstance(separated, dict):
-            return {
-                stem: values[..., :original_length]
-                for stem, values in separated.items()
-            }
-        return separated[..., :original_length]
+            sample_rate = max(1, int(config.audio.sample_rate))
+            target_length = chunk_size + sample_rate
+            padded_mix = np.pad(
+                mix,
+                ((0, 0), (0, target_length - original_length)),
+                mode="constant",
+            )
+            separated = original_demix(self, padded_mix)
+            if isinstance(separated, dict):
+                return {
+                    stem: values[..., :original_length]
+                    for stem, values in separated.items()
+                }
+            return separated[..., :original_length]
 
-    setattr(patched_demix, _DEMIX_PATCH_MARKER, True)
-    MDXCSeparator.demix = patched_demix
+        setattr(patched_demix, _DEMIX_PATCH_MARKER, True)
+        MDXCSeparator.demix = patched_demix
