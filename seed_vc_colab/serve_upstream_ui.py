@@ -27,6 +27,7 @@ def record(
     version: str,
     source_audio: str | None,
     reference_audio: str | None,
+    controls: dict[str, object],
 ) -> None:
     if not source_audio or not Path(source_audio).is_file():
         raise gr.Error("Smoke source audio did not reach the backend")
@@ -40,6 +41,7 @@ def record(
                     "version": version,
                     "source": Path(source_audio).name,
                     "reference": Path(reference_audio).name,
+                    "controls": controls,
                 },
                 ensure_ascii=False,
             )
@@ -58,9 +60,20 @@ def smoke_v1(
     pitch_shift=0,
     stream_output=True,
 ):
-    del diffusion_steps, length_adjust, inference_cfg_rate, f0_condition
-    del auto_f0_adjust, pitch_shift, stream_output
-    record("v1", source_audio_path, target_audio_path)
+    record(
+        "v1",
+        source_audio_path,
+        target_audio_path,
+        {
+            "diffusion_steps": diffusion_steps,
+            "length_adjust": length_adjust,
+            "inference_cfg_rate": inference_cfg_rate,
+            "f0_condition": f0_condition,
+            "auto_f0_adjust": auto_f0_adjust,
+            "pitch_shift": pitch_shift,
+            "stream_output": stream_output,
+        },
+    )
     yield source_audio_path, None
     yield None, source_audio_path
 
@@ -70,19 +83,32 @@ def smoke_v2(
     target_audio_path,
     diffusion_steps=30,
     length_adjust=1.0,
-    intelligebility_cfg_rate=0.7,
+    intelligebility_cfg_rate=0.0,
     similarity_cfg_rate=0.7,
-    top_p=0.7,
-    temperature=0.7,
-    repetition_penalty=1.5,
+    top_p=0.9,
+    temperature=1.0,
+    repetition_penalty=1.0,
     convert_style=False,
     anonymization_only=False,
     stream_output=True,
 ):
-    del diffusion_steps, length_adjust, intelligebility_cfg_rate
-    del similarity_cfg_rate, top_p, temperature, repetition_penalty
-    del convert_style, anonymization_only, stream_output
-    record("v2", source_audio_path, target_audio_path)
+    record(
+        "v2",
+        source_audio_path,
+        target_audio_path,
+        {
+            "diffusion_steps": diffusion_steps,
+            "length_adjust": length_adjust,
+            "intelligebility_cfg_rate": intelligebility_cfg_rate,
+            "similarity_cfg_rate": similarity_cfg_rate,
+            "top_p": top_p,
+            "temperature": temperature,
+            "repetition_penalty": repetition_penalty,
+            "convert_style": convert_style,
+            "anonymization_only": anonymization_only,
+            "stream_output": stream_output,
+        },
+    )
     yield source_audio_path, None
     yield None, source_audio_path
 
