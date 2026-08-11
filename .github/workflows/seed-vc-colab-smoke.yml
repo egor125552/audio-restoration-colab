@@ -1,0 +1,46 @@
+name: Seed-VC Colab smoke
+
+on:
+  push:
+    branches:
+      - seed-vc-colab-smoke
+    paths:
+      - "seed_vc_colab/**"
+      - "notebooks/Seed_VC_RU.ipynb"
+      - ".github/workflows/seed-vc-colab-smoke.yml"
+  pull_request:
+    paths:
+      - "seed_vc_colab/**"
+      - "notebooks/Seed_VC_RU.ipynb"
+      - ".github/workflows/seed-vc-colab-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seed-vc-colab-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  colab-docker-smoke:
+    name: Clean Colab install + imports + Chromium Gradio
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Pull official Google Colab runtime
+        run: docker pull us-docker.pkg.dev/colab-images/public/cpu-runtime:latest
+
+      - name: Run Seed-VC smoke suite inside clean Colab container
+        run: |
+          docker run --rm \
+            --entrypoint /bin/bash \
+            -e CI=1 \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace \
+            us-docker.pkg.dev/colab-images/public/cpu-runtime:latest \
+            -lc 'bash seed_vc_colab/ci_inside_colab.sh'
