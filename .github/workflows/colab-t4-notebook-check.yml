@@ -1,0 +1,178 @@
+name: Проверка Colab-блокнота AudioSR T4
+
+on:
+  pull_request:
+    paths:
+      - "notebooks/audiosr_t4_colab_probe.ipynb"
+      - "scripts/prepare_audiosr_t4.sh"
+      - "scripts/probe_audiosr_t4.py"
+      - "scripts/check_audiosr_unet_export.py"
+      - ".github/workflows/colab-t4-notebook-check.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: colab-t4-notebook-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  colab-runtime:
+    name: Официальная среда Google Colab без GPU
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: us-docker.pkg.dev/colab-images/public/cpu-runtime:latest
+      options: --user 0
+
+    steps:
+      - name: Получить код
+        uses: actions/checkout@v7.0.1
+
+      - name: Показать реальную Colab-среду
+        run: |
+          python - <<'PY'
+          import platform
+          import sys
+
+          import torch
+
+          print("Python:", sys.version)
+          print("Platform:", platform.platform())
+          print("PyTorch:", torch.__version__)
+          print("PyTorch CUDA build:", torch.version.cuda)
+          print("CUDA доступна на CPU runner:", torch.cuda.is_available())
+          PY
+
+      - name: Проверить структуру маленького блокнота
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("notebooks/audiosr_t4_colab_probe.ipynb")
+          notebook = json.loads(path.read_text(encoding="utf-8"))
+          if notebook.get("nbformat") != 4:
+              raise SystemExit("Ожидался Jupyter nbformat 4")
+          cells = notebook.get("cells", [])
+          if len(cells) != 7:
+              raise SystemExit(f"Ожидалось 7 компактных ячеек, найдено {len(cells)}")
+          source = "\n".join(
+              "".join(cell.get("source", []))
+              for cell in cells
+              if cell.get("cell_type") == "code"
+          )
+          required = [
+              "torch.cuda.is_available()",
+              "agent/audiosr-t4-tensorrt",
+              "uv==0.12.0",
+              "prepare_audiosr_t4.sh",
+              "files.upload()",
+              "probe_audiosr_t4.py",
+              "--steps', '30",
+              "--runs', '2",
+          ]
+          missing = [item for item in required if item not in source]
+          if missing:
+              raise SystemExit(
+                  "В блокноте не найдены обязательные части: " + ", ".join(missing)
+              )
+          print("Блокнот валиден и содержит все обязательные шаги.")
+          PY
+
+      - name: Скомпилировать код всех ячеек внутри Colab image
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          from google.colab import files  # noqa: F401
+          from IPython.display import Audio, display  # noqa: F401
+
+          path = Path("notebooks/audiosr_t4_colab_probe.ipynb")
+          notebook = json.loads(path.read_text(encoding="utf-8"))
+          compiled = 0
+          for index, cell in enumerate(notebook.get("cells", []), start=1):
+              if cell.get("cell_type") != "code":
+                  continue
+              source = "".join(cell.get("source", []))
+              compile(source, f"{path}:cell-{index}", "exec")
+              compiled += 1
+          print(
+              f"Python-код всех {compiled} code-ячеек компилируется; "
+              "Colab/IPython импорты доступны."
+          )
+          PY
+
+      - name: Проверить подготовку аудио тем же FFmpeg helper
+        run: |
+          python - <<'PY'
+          import wave
+          from pathlib import Path
+
+          from scripts.probe_audiosr_t4 import PROBE_SECONDS, _prepare_probe_input
+
+          source = Path("/tmp/audiosr-probe-source.wav")
+          sample_rate = 16_000
+          with wave.open(str(source), "wb") as handle:
+              handle.setnchannels(1)
+              handle.setsampwidth(2)
+              handle.setframerate(sample_rate)
+              handle.writeframes(b"\x00\x00" * sample_rate * 6)
+
+          output_dir = Path("/tmp/audiosr-probe-audio")
+          output_dir.mkdir(parents=True, exist_ok=True)
+          target = _prepare_probe_input(source, output_dir)
+          with wave.open(str(target), "rb") as handle:
+              channels = handle.getnchannels()
+              rate = handle.getframerate()
+              width = handle.getsampwidth()
+              duration = handle.getnframes() / rate
+
+          if channels != 1 or rate != 48_000 or width != 3:
+              raise SystemExit(
+                  f"Неожиданный WAV: channels={channels}, rate={rate}, width={width}"
+              )
+          if abs(duration - PROBE_SECONDS) > 0.02:
+              raise SystemExit(
+                  f"Неожиданная длительность WAV: {duration:.3f} с"
+              )
+          print(
+              f"FFmpeg helper готов: mono 48 kHz / 24-bit / {duration:.2f} с."
+          )
+          PY
+
+      - name: Проверить экспериментальную ветку блокнота
+        run: |
+          git ls-remote --exit-code \
+            https://github.com/egor125552/audio-restoration-colab.git \
+            refs/heads/agent/audiosr-t4-tensorrt >/dev/null
+
+      - name: Установить uv внутри официального Colab image
+        run: python -m pip install --disable-pip-version-check -q "uv==0.12.0"
+
+      - name: Создать тот же изолированный TensorRT-стек, что создаст блокнот
+        env:
+          AUDIO_RESTORATION_T4_STACK_CHECK: "1"
+        run: |
+          mkdir -p /content
+          bash scripts/prepare_audiosr_t4.sh /tmp/audio-restoration-colab-t4
+
+      - name: Проверить реальный AudioSR UNet в этой же базе
+        run: |
+          /tmp/audio-restoration-colab-t4/envs/audiosr_trt/bin/python \
+            scripts/check_audiosr_unet_export.py
+
+      - name: Проверить CLI probe
+        run: |
+          /tmp/audio-restoration-colab-t4/envs/audiosr_trt/bin/python \
+            scripts/probe_audiosr_t4.py --help
+
+      - name: Проверить синтаксис
+        run: |
+          bash -n scripts/prepare_audiosr_t4.sh
+          python -m json.tool notebooks/audiosr_t4_colab_probe.ipynb >/dev/null
+          python -m py_compile \
+            scripts/probe_audiosr_t4.py \
+            scripts/check_audiosr_unet_export.py
