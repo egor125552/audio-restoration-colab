@@ -1,3 +1,4 @@
+# ruff: noqa: I001
 from __future__ import annotations
 
 import json
@@ -18,15 +19,14 @@ if not source.is_dir():
 os.chdir(source)
 sys.path.insert(0, str(source))
 
-# These imports deliberately use the real installed packages and real upstream
-# Seed-VC modules. No mocks are allowed in this file.
+# These imports deliberately happen after sys.path points at the pinned upstream
+# checkout. No mocks are used here.
+import app as seed_app  # noqa: E402
 import gradio as gr  # noqa: E402
 import librosa  # noqa: E402
 import torch  # noqa: E402
 import torchaudio  # noqa: E402
 import transformers  # noqa: E402
-
-import app as seed_app  # noqa: E402
 from modules.commons import build_model  # noqa: E402,F401
 from seed_vc_wrapper import SeedVCWrapper  # noqa: E402,F401
 
@@ -40,8 +40,6 @@ for name, value in {
     if not callable(value):
         fail(f"upstream app is missing callable {name}")
 
-# Construct the real Gradio interfaces from upstream code. This catches Gradio
-# API incompatibilities that a plain `import app` would miss.
 v1 = seed_app.create_v1_interface()
 v2 = seed_app.create_v2_interface()
 
