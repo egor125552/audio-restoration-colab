@@ -1,3 +1,4 @@
+# ruff: noqa: I001
 from __future__ import annotations
 
 import json
@@ -10,9 +11,18 @@ from playwright.sync_api import Page, sync_playwright
 
 
 BASE_URL = os.environ.get("SEED_VC_SMOKE_URL", "http://127.0.0.1:7860")
-MARKER = Path(os.environ.get("SEED_VC_SMOKE_MARKER", "/tmp/seed-vc-gradio-callbacks.jsonl"))
-SOURCE_WAV = Path(os.environ.get("SEED_VC_SMOKE_SOURCE", "/tmp/seed-vc-source.wav"))
-REFERENCE_WAV = Path(os.environ.get("SEED_VC_SMOKE_REFERENCE", "/tmp/seed-vc-reference.wav"))
+MARKER = Path(
+    os.environ.get(
+        "SEED_VC_SMOKE_MARKER",
+        "/tmp/seed-vc-gradio-callbacks.jsonl",
+    )
+)
+SOURCE_WAV = Path(
+    os.environ.get("SEED_VC_SMOKE_SOURCE", "/tmp/seed-vc-source.wav")
+)
+REFERENCE_WAV = Path(
+    os.environ.get("SEED_VC_SMOKE_REFERENCE", "/tmp/seed-vc-reference.wav")
+)
 
 
 def marker_versions() -> list[str]:
@@ -33,8 +43,9 @@ def wait_for_callback(version: str, timeout: float = 20.0) -> None:
         if version in marker_versions():
             return
         time.sleep(0.2)
+    seen = marker_versions()
     raise AssertionError(
-        f"Gradio backend callback {version!r} was not reached. Seen: {marker_versions()}"
+        f"Gradio backend callback {version!r} was not reached. Seen: {seen}"
     )
 
 
@@ -74,7 +85,9 @@ def submit_current_interface(page: Page, version: str) -> None:
         # role-based scoping unreliable. Fall back to the current visible half.
         file_inputs = page.locator('input[type="file"]')
         if file_inputs.count() < 2:
-            raise AssertionError("Seed-VC Gradio page has fewer than two file inputs")
+            raise AssertionError(
+                "Seed-VC Gradio page has fewer than two file inputs"
+            )
         if version == "v2" and file_inputs.count() >= 4:
             source_input = file_inputs.nth(2)
             reference_input = file_inputs.nth(3)
@@ -107,7 +120,10 @@ def submit_current_interface(page: Page, version: str) -> None:
 
 
 def open_v2_tab(page: Page) -> None:
-    tab = page.get_by_role("tab", name=re.compile(r"^V2 - Voice & Style Conversion$"))
+    tab = page.get_by_role(
+        "tab",
+        name=re.compile(r"^V2 - Voice & Style Conversion$"),
+    )
     if tab.count():
         tab.first.click()
         return
@@ -131,7 +147,9 @@ def main() -> None:
         page.goto(BASE_URL, wait_until="networkidle", timeout=60_000)
 
         if "Seed Voice Conversion" not in page.locator("body").inner_text():
-            raise AssertionError("Seed-VC heading is missing from rendered Gradio page")
+            raise AssertionError(
+                "Seed-VC heading is missing from rendered Gradio page"
+            )
 
         submit_current_interface(page, "v1")
         open_v2_tab(page)
@@ -144,7 +162,10 @@ def main() -> None:
     versions = marker_versions()
     if versions.count("v1") != 1 or versions.count("v2") != 1:
         raise AssertionError(f"Unexpected backend callback record: {versions}")
-    print("GRADIO E2E OK: V1 and V2 upload/settings/Submit/Clear reached Python backend")
+    print(
+        "GRADIO E2E OK: V1 and V2 upload/settings/Submit/Clear "
+        "reached Python backend"
+    )
 
 
 if __name__ == "__main__":
