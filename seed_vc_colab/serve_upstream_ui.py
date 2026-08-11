@@ -1,3 +1,4 @@
+# ruff: noqa: I001
 from __future__ import annotations
 
 import json
@@ -10,14 +11,23 @@ import gradio as gr
 
 home = Path(os.environ.get("SEED_VC_HOME", "/content/seed-vc")).resolve()
 source = home / "src"
-marker = Path(os.environ.get("SEED_VC_SMOKE_MARKER", "/tmp/seed-vc-gradio-callbacks.jsonl"))
+marker = Path(
+    os.environ.get(
+        "SEED_VC_SMOKE_MARKER",
+        "/tmp/seed-vc-gradio-callbacks.jsonl",
+    )
+)
 
 os.chdir(source)
 sys.path.insert(0, str(source))
 import app as seed_app  # noqa: E402
 
 
-def record(version: str, source_audio: str | None, reference_audio: str | None) -> None:
+def record(
+    version: str,
+    source_audio: str | None,
+    reference_audio: str | None,
+) -> None:
     if not source_audio or not Path(source_audio).is_file():
         raise gr.Error("Smoke source audio did not reach the backend")
     if not reference_audio or not Path(reference_audio).is_file():
@@ -51,8 +61,6 @@ def smoke_v1(
     del diffusion_steps, length_adjust, inference_cfg_rate, f0_condition
     del auto_f0_adjust, pitch_shift, stream_output
     record("v1", source_audio_path, target_audio_path)
-    # Return actual uploaded audio through the actual Gradio output components.
-    # Model inference is intentionally not run in the CPU-only CI smoke job.
     yield source_audio_path, None
     yield None, source_audio_path
 
@@ -80,8 +88,7 @@ def smoke_v2(
 
 
 # Keep the real upstream interface-building code and replace only the expensive
-# inference callbacks. This is not a unit test: Chromium will drive the actual
-# Gradio page, uploads and backend event queue over HTTP.
+# inference callbacks. Chromium still drives the actual Gradio page and queue.
 seed_app.convert_voice_v1_wrapper = smoke_v1
 seed_app.convert_voice_v2_wrapper = smoke_v2
 
