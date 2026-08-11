@@ -5,6 +5,14 @@
 Русский интерфейс для очистки шума и нейросетевой дорисовки верхних частот.
 Google Drive и ключи API не нужны.
 
+## Seed-VC
+
+[![Открыть Seed-VC в Google Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/egor125552/audio-restoration-colab/blob/main/notebooks/Seed_VC_RU.ipynb)
+
+Отдельный блокнот запускает Seed-VC V2 для преобразования разговорного голоса.
+Он ставит закреплённый upstream Seed-VC в Python 3.10 и перед запуском проверяет
+реальные импорты и создание интерфейса. Для него выбери T4 GPU.
+
 ## Как запустить
 
 1. Нажми кнопку «Открыть в Google Colab» выше.
@@ -63,6 +71,10 @@ AudioSR создают правдоподобное продолжение сп�
 - запуск Gradio без тяжёлых моделей;
 - открытие страницы в Chromium и проверку русских элементов интерфейса.
 
+Seed-VC дополнительно проверяется в чистом официальном Docker-образе Google
+Colab: полная установка зависимостей, `pip check`, реальные импорты V1/V2 и
+Chromium-проверка загрузок WAV, настроек, Submit и Clear с вызовом Python-бэкенда.
+
 Команды для отдельной среды разработчика:
 
 ```bash
@@ -84,5 +96,6 @@ uv run audio-restoration-colab --demo
 - [FlashSR](https://github.com/jakeoneijk/FlashSR_Inference)
 - [перепаковка FlashSR с весами](https://huggingface.co/laion/FlashSR_One-step_Versatile_Audio_Super-resolution)
 - [AudioSR](https://github.com/haoheliu/versatile_audio_super_resolution)
+- [Seed-VC](https://github.com/Plachtaa/seed-vc)
 
 Перед коммерческим использованием проверь условия именно выбранной модели.
