@@ -3,7 +3,7 @@ name: Seed-VC Colab smoke
 on:
   push:
     branches:
-      - seed-vc-colab-smoke
+      - main
     paths:
       - "seed_vc_colab/**"
       - "notebooks/Seed_VC_RU.ipynb"
