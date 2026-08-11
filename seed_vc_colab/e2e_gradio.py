@@ -56,6 +56,34 @@ def active_panel(page: Page):
     return page.locator("body")
 
 
+def audio_file_input(page: Page, label: str):
+    # Gradio replaces an Audio component's inner DOM after an upload. Looking
+    # up file inputs by nth() therefore becomes stale after the first upload.
+    # Resolve each field from its visible human/accessibility label instead.
+    components = page.locator(".gradio-audio").filter(has_text=label)
+    for index in range(components.count()):
+        component = components.nth(index)
+        if not component.is_visible():
+            continue
+        file_input = component.locator('input[type="file"]')
+        if file_input.count():
+            return file_input.first
+
+    labels = page.get_by_text(label, exact=True)
+    for index in range(labels.count()):
+        label_node = labels.nth(index)
+        if not label_node.is_visible():
+            continue
+        component = label_node.locator(
+            "xpath=ancestor::*[.//input[@type='file']][1]"
+        )
+        file_input = component.locator('input[type="file"]')
+        if file_input.count():
+            return file_input.first
+
+    raise AssertionError(f"Visible Gradio audio upload not found for {label!r}")
+
+
 def set_first_slider(panel) -> None:
     sliders = panel.locator('input[type="range"]')
     if not sliders.count():
@@ -79,27 +107,13 @@ def set_first_checkbox(panel) -> None:
 
 def submit_current_interface(page: Page, version: str) -> None:
     panel = active_panel(page)
-    file_inputs = panel.locator('input[type="file"]')
-    if file_inputs.count() < 2:
-        # Some Gradio versions keep inactive tab panels in a way that makes
-        # role-based scoping unreliable. Fall back to the current visible half.
-        file_inputs = page.locator('input[type="file"]')
-        if file_inputs.count() < 2:
-            raise AssertionError(
-                "Seed-VC Gradio page has fewer than two file inputs"
-            )
-        if version == "v2" and file_inputs.count() >= 4:
-            source_input = file_inputs.nth(2)
-            reference_input = file_inputs.nth(3)
-        else:
-            source_input = file_inputs.nth(0)
-            reference_input = file_inputs.nth(1)
-    else:
-        source_input = file_inputs.nth(0)
-        reference_input = file_inputs.nth(1)
 
-    source_input.set_input_files(str(SOURCE_WAV))
-    reference_input.set_input_files(str(REFERENCE_WAV))
+    audio_file_input(page, "Source Audio / 源音频").set_input_files(
+        str(SOURCE_WAV)
+    )
+    audio_file_input(page, "Reference Audio / 参考音频").set_input_files(
+        str(REFERENCE_WAV)
+    )
     set_first_slider(panel)
     set_first_checkbox(panel)
 
