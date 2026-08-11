@@ -15,6 +15,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   inference:
     name: Настоящий forward 900 мс — ${{ matrix.model_id }}
@@ -30,6 +34,7 @@ jobs:
           - stems_vocal_balanced
           - stems_vocal_clean
           - stems_instrumental_clean
+          - stems_instrumental_studio
           - stems_instrumental_full
           - stems_karaoke
           - stems_six

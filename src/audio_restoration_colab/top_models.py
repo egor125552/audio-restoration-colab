@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from .catalog import MODEL_SPECS
+from .studio_instrumental import STUDIO_INSTRUMENTAL_PRESET
 
 _APPLIED = False
 
@@ -62,6 +63,42 @@ def apply_top_model_catalog() -> None:
         ensemble_preset=None,
         source_text="OpenMIRLab BS-RoFormer registry / MUSDB18HQ",
     )
+
+    clean_instrumental = MODEL_SPECS["stems_instrumental_clean"]
+    studio_instrumental = replace(
+        clean_instrumental,
+        model_id="stems_instrumental_studio",
+        title="Студийная минусовка — ансамбль из трёх RoFormer",
+        short_title="Разделитель — студийная минусовка",
+        size_text="ансамбль из трёх моделей; веса скачиваются один раз",
+        purpose=(
+            "Максимально натуральная минусовка с минимальным вокальным следом"
+        ),
+        description=(
+            "Три специализированные модели независимо отделяют вокал от музыки, "
+            "после чего их результаты объединяются медианой спектра. Такой "
+            "подход уменьшает влияние одиночной ошибки одной модели."
+        ),
+        warning=(
+            "Режим заметно медленнее обычной чистой минусовки. Он специально "
+            "не делает второй агрессивный проход, чтобы меньше повреждать "
+            "тарелки, синтезаторы, гитары и реверберацию."
+        ),
+        ensemble_preset=STUDIO_INSTRUMENTAL_PRESET,
+        source_text=(
+            "Fv7z + BS-RoFormer Resurrection + becruily / median FFT"
+        ),
+    )
+
+    # Для экранного диктора новый режим должен находиться рядом с обычной
+    # «чистой минусовкой», а не в самом конце длинного списка моделей.
+    reordered = {}
+    for model_id, model in MODEL_SPECS.items():
+        reordered[model_id] = model
+        if model_id == "stems_instrumental_clean":
+            reordered[studio_instrumental.model_id] = studio_instrumental
+    MODEL_SPECS.clear()
+    MODEL_SPECS.update(reordered)
 
     # Эти пункты либо были построены на старых Demucs checkpoint, либо их
     # checkpoint отсутствует в закреплённом реестре audio-separator 0.44.5.

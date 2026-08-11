@@ -96,6 +96,45 @@ def test_russian_interface_and_model_switching(page: Page) -> None:
         )
     ).to_be_visible()
 
+    model_box.click()
+    model_box.fill("Разделитель — студийная минусовка")
+    page.get_by_role(
+        "option",
+        name="Разделитель — студийная минусовка",
+        exact=True,
+    ).click()
+    expect(
+        page.get_by_role(
+            "heading",
+            name="Студийная минусовка — ансамбль из трёх RoFormer",
+            exact=True,
+        )
+    ).to_be_visible()
+    expect(
+        page.get_by_text(
+            "Три специализированные модели независимо отделяют вокал",
+            exact=False,
+        )
+    ).to_be_visible()
+    expect(
+        page.get_by_text(
+            "не делает второй агрессивный проход",
+            exact=False,
+        )
+    ).to_be_visible()
+    expect(
+        page.get_by_text(
+            "Три модели запускаются по очереди",
+            exact=False,
+        )
+    ).to_be_visible()
+    expect(
+        page.get_by_text(
+            "предыдущая явно освобождается из памяти",
+            exact=False,
+        )
+    ).to_be_visible()
+
     artifact_dir = Path("test-artifacts")
     artifact_dir.mkdir(exist_ok=True)
     page.screenshot(
@@ -106,7 +145,7 @@ def test_russian_interface_and_model_switching(page: Page) -> None:
 
 
 def _create_test_wave(path: Path) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(exist_ok=True, parents=True)
     with wave.open(str(path), "wb") as audio:
         audio.setnchannels(1)
         audio.setsampwidth(2)
