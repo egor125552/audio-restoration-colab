@@ -35,10 +35,34 @@ if XVC is None or load_xvc is None:
 repo_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(repo_root / "x_vc_colab"))
 from app import build_demo
+from runtime import (
+    LATENT_HOP_LENGTH,
+    MAX_OFFLINE_CHUNK_SECONDS,
+    _plan_offline_chunks,
+)
 
 demo = build_demo()
 if demo is None:
     raise SystemExit("Gradio demo was not constructed.")
 
+# Reproduce the user's failing shape in timeline units:
+# 2232 acoustic frames at 50 Hz = 44.64 s of 16 kHz audio.
+sample_rate = 16000
+long_samples = 2232 * (sample_rate // 50)
+assert long_samples % LATENT_HOP_LENGTH == 0
+ranges = _plan_offline_chunks(long_samples, sample_rate)
+assert len(ranges) >= 2, ranges
+assert ranges[0][0] == 0, ranges
+assert ranges[-1][1] == long_samples, ranges
+max_samples = int(MAX_OFFLINE_CHUNK_SECONDS * sample_rate)
+for start, end in ranges:
+    assert end > start, ranges
+    assert end - start <= max_samples, ranges
+    assert start % LATENT_HOP_LENGTH == 0, ranges
+    assert end == long_samples or end % LATENT_HOP_LENGTH == 0, ranges
+for previous, current in zip(ranges, ranges[1:]):
+    assert current[0] < previous[1], ranges
+
+print("LONG AUDIO CHUNK PLAN OK:", ranges)
 print("X-VC MODEL IMPORT OK:", XVC)
 print("GRADIO BUILD OK:", type(demo).__name__)
