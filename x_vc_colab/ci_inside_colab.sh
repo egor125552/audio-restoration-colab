@@ -11,12 +11,22 @@ INSTALLER="${ROOT}/x_vc_colab/install_xvc.sh"
 PYTHON="${XVC_HOME}/.venv/bin/python"
 LOCAL_LOG="/tmp/xvc-gradio-local.log"
 SHARE_LOG="/tmp/xvc-gradio-share.log"
+LAUNCHER_LOG="/tmp/xvc-colab-launcher.log"
+LAUNCHER_PID="/tmp/xvc-colab-launcher.pid"
 SERVER_PID=""
 
 cleanup() {
   if [[ -n "${SERVER_PID}" ]] && kill -0 "${SERVER_PID}" >/dev/null 2>&1; then
     kill "${SERVER_PID}" >/dev/null 2>&1 || true
     wait "${SERVER_PID}" >/dev/null 2>&1 || true
+  fi
+  if [[ -f "${LAUNCHER_PID}" ]]; then
+    launcher_pid="$(cat "${LAUNCHER_PID}" 2>/dev/null || true)"
+    if [[ -n "${launcher_pid}" ]] && kill -0 "${launcher_pid}" >/dev/null 2>&1; then
+      kill "${launcher_pid}" >/dev/null 2>&1 || true
+      wait "${launcher_pid}" >/dev/null 2>&1 || true
+    fi
+    rm -f "${LAUNCHER_PID}"
   fi
 }
 trap cleanup EXIT
@@ -143,5 +153,30 @@ if [[ "${share_ok}" != "1" ]]; then
   echo "Could not create and reach a public gradio.live URL after 3 attempts." >&2
   exit 1
 fi
+
+printf '\n=== Exact Colab background launcher path ===\n'
+launcher_output="$(
+  XVC_HOME="${XVC_HOME}" \
+  XVC_SMOKE_MODE=1 \
+  python3 -u "${ROOT}/x_vc_colab/launch_colab.py" \
+    --python "${PYTHON}" \
+    --app "${ROOT}/x_vc_colab/app.py" \
+    --port 7862 \
+    --timeout 90 \
+    --log "${LAUNCHER_LOG}" \
+    --pid-file "${LAUNCHER_PID}"
+)"
+printf '%s\n' "${launcher_output}"
+launcher_url="$(printf '%s\n' "${launcher_output}" | sed -n 's/^XVC_PUBLIC_URL=//p' | head -n1)"
+if [[ -z "${launcher_url}" ]]; then
+  echo "Colab launcher did not return XVC_PUBLIC_URL." >&2
+  cat "${LAUNCHER_LOG}" >&2 || true
+  exit 1
+fi
+curl -L --retry 5 --retry-delay 2 --fail --silent --show-error \
+  --max-time 30 "${launcher_url}" >/dev/null
+printf 'COLAB LAUNCHER OK: %s\n' "${launcher_url}"
+
+cleanup
 
 printf '\n=== X-VC Colab smoke suite passed ===\n'
