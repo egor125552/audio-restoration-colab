@@ -1,0 +1,47 @@
+name: X-VC Colab smoke
+
+on:
+  push:
+    branches:
+      - agent/x-vc-colab
+    paths:
+      - "x_vc_colab/**"
+      - "notebooks/X_VC_RU.ipynb"
+      - ".github/workflows/x-vc-colab-smoke.yml"
+  pull_request:
+    paths:
+      - "x_vc_colab/**"
+      - "notebooks/X_VC_RU.ipynb"
+      - ".github/workflows/x-vc-colab-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: x-vc-colab-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  colab-docker-smoke:
+    name: Clean Colab install + X-VC import + Gradio E2E + public link
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Pull official Google Colab CPU runtime
+        run: docker pull us-docker.pkg.dev/colab-images/public/cpu-runtime:latest
+
+      - name: Run X-VC smoke suite inside clean Colab container
+        run: |
+          docker run --rm \
+            --shm-size=2g \
+            --entrypoint /bin/bash \
+            -e CI=1 \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace \
+            us-docker.pkg.dev/colab-images/public/cpu-runtime:latest \
+            -lc 'bash x_vc_colab/ci_inside_colab.sh'
