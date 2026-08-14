@@ -58,10 +58,10 @@ log "Installing official X-VC dependencies"
 uv pip install --python "${PYTHON}" --upgrade "pip<26" "setuptools<81" wheel
 uv pip install --python "${PYTHON}" -r "${SOURCE_DIR}/requirements.txt"
 
-log "Installing Colab UI/download helpers"
+log "Installing Colab UI/download helpers compatible with X-VC Transformers"
 uv pip install --python "${PYTHON}" \
-  "gradio==6.24.0" \
-  "huggingface-hub==0.36.0" \
+  "gradio==5.49.1" \
+  "huggingface-hub==0.36.2" \
   "modelscope==1.29.2"
 
 log "Checking dependency consistency"
