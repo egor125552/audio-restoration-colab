@@ -13,6 +13,7 @@ TTS_PY="$ROOT/tts-env/bin/python"
 ASR_PY="$ROOT/asr-env/bin/python"
 
 "$TTS_PY" qwen3_tts_lora_colab/smoke_import.py
+python3 qwen3_tts_lora_colab/colab_stream.py
 
 "$TTS_PY" -m pip install --quiet "playwright==1.55.0"
 "$TTS_PY" -m playwright install --with-deps chromium
@@ -37,10 +38,17 @@ done
 
 "$TTS_PY" - <<'PY'
 from pathlib import Path
-text = Path('qwen3_tts_lora_colab/launch_colab.py').read_text(encoding='utf-8')
-assert 'os.execv' in text
-assert 'PYTHONUNBUFFERED' in text
-print('COLAB LIVE OUTPUT LAUNCHER OK')
+import json
+
+launcher = Path('qwen3_tts_lora_colab/launch_colab.py').read_text(encoding='utf-8')
+assert 'os.execv' in launcher
+assert 'PYTHONUNBUFFERED' in launcher
+
+notebook = json.loads(Path('notebooks/Qwen3_TTS_LoRA_RU.ipynb').read_text(encoding='utf-8'))
+last = ''.join(notebook['cells'][-1]['source'])
+assert 'from colab_stream import run_streamed' in last
+assert 'run_streamed(cmd)' in last
+print('COLAB LIVE OUTPUT RELAY WIRED OK')
 PY
 
 cat /tmp/qwen3-gradio.log
