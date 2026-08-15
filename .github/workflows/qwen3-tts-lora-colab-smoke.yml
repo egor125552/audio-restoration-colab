@@ -1,0 +1,47 @@
+name: Qwen3-TTS LoRA Colab smoke
+
+on:
+  push:
+    branches:
+      - agent/qwen3-tts-lora-colab
+    paths:
+      - "qwen3_tts_lora_colab/**"
+      - "notebooks/Qwen3_TTS_LoRA_RU.ipynb"
+      - ".github/workflows/qwen3-tts-lora-colab-smoke.yml"
+  pull_request:
+    paths:
+      - "qwen3_tts_lora_colab/**"
+      - "notebooks/Qwen3_TTS_LoRA_RU.ipynb"
+      - ".github/workflows/qwen3-tts-lora-colab-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qwen3-tts-lora-colab-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  colab-docker-smoke:
+    name: Clean Colab install + model imports + Russian Gradio E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Pull official Google Colab CPU runtime
+        run: docker pull us-docker.pkg.dev/colab-images/public/cpu-runtime:latest
+
+      - name: Run Qwen3-TTS LoRA smoke suite inside clean Colab container
+        run: |
+          docker run --rm \
+            --shm-size=2g \
+            --entrypoint /bin/bash \
+            -e CI=1 \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace \
+            us-docker.pkg.dev/colab-images/public/cpu-runtime:latest \
+            -lc 'bash qwen3_tts_lora_colab/ci_inside_colab.sh'
