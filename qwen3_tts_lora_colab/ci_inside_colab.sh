@@ -42,16 +42,21 @@ import json
 
 launcher = Path('qwen3_tts_lora_colab/launch_colab.py').read_text(encoding='utf-8')
 assert 'server_name="127.0.0.1"' in launcher
-assert 'share=False' in launcher
+assert 'share=not SMOKE' in launcher
+assert 'if share_url:' in launcher
+assert 'Публичная интернет-ссылка не работает' in launcher
+assert 'demo.block_thread()' in launcher
 assert 'build_demo' in launcher
 
 notebook = json.loads(Path('notebooks/Qwen3_TTS_LoRA_RU.ipynb').read_text(encoding='utf-8'))
 last = ''.join(notebook['cells'][-1]['source'])
+markdown = ''.join(notebook['cells'][-2]['source'])
 assert 'from colab_stream import run_streamed' in last
 assert 'serve_kernel_port_as_iframe' in last
 assert 'ready_port=PORT' in last
 assert 'on_ready=show_interface' in last
-print('COLAB LIVE OUTPUT + BUILT-IN PORT PROXY WIRED OK')
+assert 'публичную ссылку gradio.live' in markdown
+print('COLAB PROXY + OPTIONAL PUBLIC SHARE LINK WIRED OK')
 PY
 
 cat /tmp/qwen3-gradio.log
