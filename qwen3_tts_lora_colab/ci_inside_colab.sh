@@ -19,7 +19,7 @@ python3 qwen3_tts_lora_colab/colab_stream.py
 "$TTS_PY" -m playwright install --with-deps chromium
 
 rm -f "$QWEN_TRAIN_SMOKE_MARKER"
-QWEN_TRAIN_PORT=7860 "$TTS_PY" -u qwen3_tts_lora_colab/app.py >/tmp/qwen3-gradio.log 2>&1 &
+QWEN_TRAIN_PORT=7860 "$TTS_PY" -u qwen3_tts_lora_colab/launch_colab.py >/tmp/qwen3-gradio.log 2>&1 &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
 
@@ -41,14 +41,17 @@ from pathlib import Path
 import json
 
 launcher = Path('qwen3_tts_lora_colab/launch_colab.py').read_text(encoding='utf-8')
-assert 'os.execv' in launcher
-assert 'PYTHONUNBUFFERED' in launcher
+assert 'server_name="127.0.0.1"' in launcher
+assert 'share=False' in launcher
+assert 'build_demo' in launcher
 
 notebook = json.loads(Path('notebooks/Qwen3_TTS_LoRA_RU.ipynb').read_text(encoding='utf-8'))
 last = ''.join(notebook['cells'][-1]['source'])
 assert 'from colab_stream import run_streamed' in last
-assert 'run_streamed(cmd)' in last
-print('COLAB LIVE OUTPUT RELAY WIRED OK')
+assert 'serve_kernel_port_as_iframe' in last
+assert 'ready_port=PORT' in last
+assert 'on_ready=show_interface' in last
+print('COLAB LIVE OUTPUT + BUILT-IN PORT PROXY WIRED OK')
 PY
 
 cat /tmp/qwen3-gradio.log
