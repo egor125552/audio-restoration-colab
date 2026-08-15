@@ -23,11 +23,13 @@ def segment_file(path: Path, out_dir: Path, prefix: str, min_ms: int = 2500, max
     AudioSegment = _audio_segment_class()
     split_on_silence = _split_on_silence()
     audio = AudioSegment.from_file(path).set_channels(1).set_frame_rate(24000)
+    audio_dbfs = audio.dBFS
     chunks = split_on_silence(
         audio,
         min_silence_len=450,
-        silence_thresh=audio.dBFS - 16 if audio.dBFS != float("-inf") else -45,
+        silence_thresh=audio_dbfs - 16 if audio_dbfs != float("-inf") else -45,
         keep_silence=180,
+        seek_step=10,
     )
     if not chunks:
         chunks = [audio]
@@ -47,7 +49,9 @@ def segment_file(path: Path, out_dir: Path, prefix: str, min_ms: int = 2500, max
     result: list[Path] = []
     for i, chunk in enumerate(normalized):
         dst = out_dir / f"{prefix}-{i:04d}.wav"
-        chunk.export(dst, format="wav", parameters=["-ac", "1", "-ar", "24000"])
+        # audio is already mono 24 kHz. With no ffmpeg parameters pydub writes
+        # WAV directly instead of starting a new ffmpeg process for every clip.
+        chunk.export(dst, format="wav")
         result.append(dst)
     return result
 
@@ -85,7 +89,20 @@ def prepare(project_name: str, source_folder: str, asr_python: str, asr_model: s
     manifest.write_text("\n".join(json.dumps({"audio": str(p)}, ensure_ascii=False) for p in clips) + "\n", encoding="utf-8")
 
     worker = Path(__file__).with_name("asr_worker.py")
-    cmd = [asr_python, str(worker), "--manifest", str(manifest), "--output", str(asr_output), "--model", asr_model, "--language", "Russian"]
+    cmd = [
+        asr_python,
+        str(worker),
+        "--manifest",
+        str(manifest),
+        "--output",
+        str(asr_output),
+        "--model",
+        asr_model,
+        "--language",
+        "Russian",
+        "--batch-size",
+        "4",
+    ]
     subprocess.run(cmd, check=True)
 
     raw_records = [json.loads(line) for line in asr_output.read_text(encoding="utf-8").splitlines() if line.strip()]
