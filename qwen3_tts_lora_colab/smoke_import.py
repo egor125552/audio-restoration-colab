@@ -26,13 +26,26 @@ def main() -> None:
         "Проверить папку",
         "Скачать модели",
         "Подготовить датасет",
+        "Всего эпох",
+        "Скорость обучения",
+        "Размер адаптера LoRA",
+        "Множитель LoRA",
+        "Накопление градиентов",
+        "Продолжить с последнего сохранения",
+        "Эпоха — один полный проход",
+        "экономить видеопамять",
         "Начать обучение",
         "Остановить обучение",
         "Обновить состояние",
     ]
     missing = [x for x in required if x not in serialized]
     if missing:
-        raise AssertionError(f"В Gradio-конфиге нет элементов: {missing}")
+        raise AssertionError(f"В Gradio-конфиге нет элементов или подсказок: {missing}")
+
+    assert app.recommend_epochs(30) in range(10, 16)
+    assert app.recommend_epochs(60) in range(5, 9)
+    assert app.recommend_epochs(120) in range(2, 4)
+    print("EPOCH RECOMMENDATION OK", app.recommend_epochs(30), app.recommend_epochs(60), app.recommend_epochs(120))
 
     root = Path(os.environ.get("QWEN_TRAIN_HOME", "/content/qwen3-tts-trainer"))
     asr_python = root / "asr-env/bin/python"
