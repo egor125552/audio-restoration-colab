@@ -19,6 +19,17 @@ ensure_command() {
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$pkg"
 }
 
+ensure_isolated_venv() {
+  local venv="$1"
+  if [[ -f "${venv}/pyvenv.cfg" ]] && grep -qi '^include-system-site-packages = true' "${venv}/pyvenv.cfg"; then
+    log "Пересоздаю старое окружение без системных пакетов Colab: ${venv}"
+    rm -rf "$venv"
+  fi
+  if [[ ! -x "${venv}/bin/python" ]]; then
+    uv venv --seed --python "$PYTHON_BIN" "$venv"
+  fi
+}
+
 mkdir -p "$ROOT"
 ensure_command git git
 ensure_command ffmpeg ffmpeg
@@ -29,12 +40,8 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 log "Использую Python: $(${PYTHON_BIN} --version 2>&1)"
-if [[ ! -x "${TTS_VENV}/bin/python" ]]; then
-  uv venv --seed --system-site-packages --python "$PYTHON_BIN" "$TTS_VENV"
-fi
-if [[ ! -x "${ASR_VENV}/bin/python" ]]; then
-  uv venv --seed --system-site-packages --python "$PYTHON_BIN" "$ASR_VENV"
-fi
+ensure_isolated_venv "$TTS_VENV"
+ensure_isolated_venv "$ASR_VENV"
 
 TTS_PY="${TTS_VENV}/bin/python"
 ASR_PY="${ASR_VENV}/bin/python"
@@ -64,6 +71,7 @@ Qwen3-ASR environment: ${ASR_VENV}
 Python: $(${TTS_PY} --version 2>&1)
 Qwen3-TTS: 0.1.1
 Qwen3-ASR: 0.0.6
+Isolation: system site-packages disabled
 TXT
 
 log "Готово: ${ROOT}"
