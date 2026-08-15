@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
-"""LoRA trainer for Qwen3-TTS.
-
-The LoRA training core is adapted from Alexandria (MIT, 2026 Finrandojin)
-and follows Qwen3-TTS's official teacher-forcing layout. This version adds
-T4-friendly dtype selection, compact tqdm progress, per-epoch persistent
-checkpoints, and resume support for Google Colab.
-"""
+"""LoRA trainer for Qwen3-TTS Base models."""
 from __future__ import annotations
 
 import argparse
 import gc
 import json
+import math
 import random
 import shutil
 import sys
@@ -28,9 +23,17 @@ def parse_args():
     p.add_argument("--lr", type=float, default=1e-6)
     p.add_argument("--lora_r", type=int, default=64)
     p.add_argument("--lora_alpha", type=int, default=128)
+    p.add_argument("--batch_size", type=int, default=1)
     p.add_argument("--gradient_accumulation_steps", type=int, default=4)
+    p.add_argument(
+        "--gradient-checkpointing",
+        dest="gradient_checkpointing",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     p.add_argument("--max_audio_seconds", type=float, default=20.0)
     p.add_argument("--language", default="russian")
+    p.add_argument("--attention_implementation", choices=["eager", "sdpa"], default="eager")
     p.add_argument("--resume", action="store_true")
     return p.parse_args()
 
@@ -167,6 +170,32 @@ def build_teacher_forcing_input(sample, hf_model, device, language="russian"):
     return full_input, labels, codec_ids, prefill_len
 
 
+def collate_teacher_forcing(samples, hf_model, device, language="russian"):
+    """Build a real padded GPU batch from variable-length utterances."""
+    import torch
+
+    built = [build_teacher_forcing_input(s, hf_model, device, language) for s in samples]
+    max_len = max(item[0].shape[1] for item in built)
+    hidden_size = built[0][0].shape[-1]
+    dtype = built[0][0].dtype
+
+    inputs = torch.zeros((len(built), max_len, hidden_size), device=device, dtype=dtype)
+    labels = torch.full((len(built), max_len), -100, device=device, dtype=torch.long)
+    attention_mask = torch.zeros((len(built), max_len), device=device, dtype=torch.long)
+    codec_items = []
+    prefill_lengths = []
+
+    for i, (full_input, item_labels, codec_ids, prefill_len) in enumerate(built):
+        length = full_input.shape[1]
+        inputs[i, :length] = full_input[0]
+        labels[i, :length] = item_labels[0]
+        attention_mask[i, :length] = 1
+        codec_items.append(codec_ids)
+        prefill_lengths.append(prefill_len)
+
+    return inputs, labels, attention_mask, codec_items, prefill_lengths
+
+
 def save_checkpoint(peft_talker, optimizer, epoch, best_loss, local_root: Path, persistent_root: Path) -> None:
     import torch
 
@@ -191,16 +220,27 @@ def train(args):
     from qwen_tts import Qwen3TTSModel
     from tqdm.auto import tqdm
 
+    args.batch_size = max(1, int(args.batch_size))
+    args.gradient_accumulation_steps = max(1, int(args.gradient_accumulation_steps))
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = pick_dtype(torch)
     print(f"Устройство: {device}. Тип вычислений: {str(dtype).replace('torch.', '')}.", flush=True)
+    print(
+        "Настройки: "
+        f"batch size {args.batch_size}, accumulation {args.gradient_accumulation_steps}, "
+        f"effective batch {args.batch_size * args.gradient_accumulation_steps}, "
+        f"gradient checkpointing {'включён' if args.gradient_checkpointing else 'выключен'}, "
+        f"attention {args.attention_implementation}.",
+        flush=True,
+    )
     print(f"Загружаю {args.model_name}...", flush=True)
 
     model = Qwen3TTSModel.from_pretrained(
         args.model_name,
         device_map="cuda:0" if device == "cuda" else None,
         dtype=dtype,
-        attn_implementation="eager",
+        attn_implementation=args.attention_implementation,
     )
     hf_model = model.model
     processor = model.processor
@@ -236,10 +276,18 @@ def train(args):
 
     hf_model.talker = peft_talker
     peft_talker.enable_input_require_grads()
-    try:
-        peft_talker.base_model.model.model.gradient_checkpointing_enable()
-    except AttributeError:
-        pass
+    if args.gradient_checkpointing:
+        try:
+            peft_talker.base_model.model.model.gradient_checkpointing_enable()
+            print("Gradient checkpointing включён.", flush=True)
+        except AttributeError:
+            print("Предупреждение: эта сборка модели не дала включить gradient checkpointing.", flush=True)
+    else:
+        try:
+            peft_talker.base_model.model.model.gradient_checkpointing_disable()
+        except AttributeError:
+            pass
+        print("Gradient checkpointing выключен.", flush=True)
 
     trainable = [p for p in peft_talker.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(trainable, lr=args.lr, weight_decay=0.01)
@@ -261,23 +309,26 @@ def train(args):
         random.shuffle(samples)
         optimizer.zero_grad(set_to_none=True)
         epoch_loss = 0.0
-        valid_steps = 0
+        valid_samples = 0
+        total_batches = math.ceil(len(samples) / args.batch_size)
         pbar = tqdm(
-            enumerate(samples, 1),
-            total=len(samples),
+            range(0, len(samples), args.batch_size),
+            total=total_batches,
             desc=f"Эпоха {epoch}/{args.epochs}",
-            unit="шаг",
+            unit="батч",
             dynamic_ncols=False,
-            ncols=100,
+            ncols=110,
             leave=False,
             file=sys.stdout,
         )
-        for step_idx, sample in pbar:
+        for batch_index, start in enumerate(pbar, 1):
+            batch_samples = samples[start:start + args.batch_size]
             try:
-                full_input, labels, codec_ids, prefill_len = build_teacher_forcing_input(sample, hf_model, device, args.language)
-                total_audio_steps = codec_ids.shape[0]
+                full_input, labels, attention_mask, codec_items, prefill_lengths = collate_teacher_forcing(
+                    batch_samples, hf_model, device, args.language
+                )
                 with torch.autocast(device_type="cuda", dtype=dtype, enabled=device == "cuda"):
-                    output = transformer(inputs_embeds=full_input, use_cache=False)
+                    output = transformer(inputs_embeds=full_input, attention_mask=attention_mask, use_cache=False)
                     hidden = output.last_hidden_state
                     logits = base_talker.codec_head(hidden)
                     talker_loss = F.cross_entropy(
@@ -285,8 +336,16 @@ def train(args):
                         labels[:, 1:].contiguous().view(-1),
                         ignore_index=-100,
                     )
-                    audio_hidden = hidden[0, prefill_len - 1:prefill_len + total_audio_steps - 1, :]
-                    _, sub_loss = base_talker.forward_sub_talker_finetune(codec_ids, audio_hidden)
+
+                    sub_codec = []
+                    sub_hidden = []
+                    for i, (codec_ids, prefill_len) in enumerate(zip(codec_items, prefill_lengths)):
+                        audio_steps = codec_ids.shape[0]
+                        sub_codec.append(codec_ids)
+                        sub_hidden.append(hidden[i, prefill_len - 1:prefill_len + audio_steps - 1, :])
+                    packed_codec = torch.cat(sub_codec, dim=0)
+                    packed_hidden = torch.cat(sub_hidden, dim=0)
+                    _, sub_loss = base_talker.forward_sub_talker_finetune(packed_codec, packed_hidden)
                     loss = talker_loss + 0.3 * sub_loss
                     scaled = loss / args.gradient_accumulation_steps
 
@@ -296,11 +355,15 @@ def train(args):
                     scaled.backward()
 
                 step_loss = float(loss.detach().float().item())
-                epoch_loss += step_loss
-                valid_steps += 1
-                pbar.set_postfix_str(f"loss {step_loss:.4f}", refresh=True)
+                epoch_loss += step_loss * len(batch_samples)
+                valid_samples += len(batch_samples)
+                pbar.set_postfix_str(
+                    f"loss {step_loss:.4f}, batch {len(batch_samples)}, samples {min(start + len(batch_samples), len(samples))}/{len(samples)}",
+                    refresh=True,
+                )
 
-                if step_idx % args.gradient_accumulation_steps == 0 or step_idx == len(samples):
+                should_step = batch_index % args.gradient_accumulation_steps == 0 or batch_index == total_batches
+                if should_step:
                     if use_scaler:
                         scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(trainable, 1.0)
@@ -310,13 +373,15 @@ def train(args):
                     else:
                         optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
-                    if device == "cuda":
-                        torch.cuda.empty_cache()
 
-                del full_input, labels, codec_ids, output, hidden, logits, audio_hidden, talker_loss, sub_loss, loss, scaled
+                del full_input, labels, attention_mask, codec_items, output, hidden, logits
+                del sub_codec, sub_hidden, packed_codec, packed_hidden, talker_loss, sub_loss, loss, scaled
             except RuntimeError as exc:
                 if "out of memory" in str(exc).lower():
-                    pbar.write(f"Пропущен шаг {step_idx}: не хватило VRAM.")
+                    pbar.write(
+                        f"Не хватило VRAM на batch size {len(batch_samples)}. "
+                        "Этот батч пропущен; уменьшите Batch size и перезапустите обучение."
+                    )
                     optimizer.zero_grad(set_to_none=True)
                     if device == "cuda":
                         torch.cuda.empty_cache()
@@ -325,7 +390,7 @@ def train(args):
                 raise
         pbar.close()
 
-        avg_loss = epoch_loss / max(valid_steps, 1)
+        avg_loss = epoch_loss / max(valid_samples, 1)
         best_loss = min(best_loss, avg_loss)
         elapsed = int(time.time() - started)
         print(f"Эпоха {epoch}/{args.epochs} завершена: loss {avg_loss:.4f}, время {elapsed} с.", flush=True)
@@ -352,7 +417,11 @@ def train(args):
                 "lora_r": args.lora_r,
                 "lora_alpha": args.lora_alpha,
                 "lr": args.lr,
+                "batch_size": args.batch_size,
                 "gradient_accumulation_steps": args.gradient_accumulation_steps,
+                "effective_batch_size": args.batch_size * args.gradient_accumulation_steps,
+                "gradient_checkpointing": args.gradient_checkpointing,
+                "attention_implementation": args.attention_implementation,
                 "samples": len(samples),
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",
