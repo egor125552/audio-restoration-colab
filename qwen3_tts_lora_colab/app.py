@@ -9,7 +9,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from project import ProjectPaths, discover_audio, stage_directory
+from project import ProjectPaths, discover_audio, list_projects, stage_directory
 from prepare_dataset import prepare as prepare_dataset
 
 ROOT = Path(os.environ.get("QWEN_TRAIN_HOME", "/content/qwen3-tts-trainer"))
@@ -34,13 +34,75 @@ def _record(event: str, **payload) -> None:
         f.write(json.dumps({"event": event, **payload}, ensure_ascii=False) + "\n")
 
 
+def _latest_checkpoint(paths: ProjectPaths) -> str:
+    found = []
+    for p in paths.checkpoints.glob("epoch-*"):
+        try:
+            found.append((int(p.name.split("-")[-1]), p))
+        except ValueError:
+            pass
+    if not found:
+        return "сохранений пока нет"
+    epoch, path = max(found)
+    return f"последнее сохранение: эпоха {epoch} ({path})"
+
+
+def project_summary(name: str | None) -> str:
+    if not name:
+        return "Существующих проектов пока нет. Создайте новый проект ниже."
+    try:
+        paths = ProjectPaths.for_name(name)
+        if not paths.root.exists():
+            return f"Проект «{paths.name}» не найден на Google Drive. Обновите список проектов."
+
+        metadata = paths.dataset / "metadata.jsonl"
+        if metadata.exists():
+            samples = sum(1 for line in metadata.read_text(encoding="utf-8").splitlines() if line.strip())
+            dataset = f"датасет готов, фрагментов: {samples}"
+        else:
+            dataset = "датасет ещё не подготовлен"
+
+        training_meta = paths.adapters / "training_meta.json"
+        if training_meta.exists():
+            try:
+                meta = json.loads(training_meta.read_text(encoding="utf-8"))
+                epoch = meta.get("epoch", "?")
+                loss = meta.get("loss")
+                adapter = f"готовая LoRA есть, эпоха {epoch}"
+                if isinstance(loss, (int, float)):
+                    adapter += f", loss {loss:.4f}"
+            except Exception:
+                adapter = "готовая LoRA есть"
+        else:
+            adapter = "готовой LoRA пока нет"
+
+        return f"Проект «{paths.name}»: {dataset}; {_latest_checkpoint(paths)}; {adapter}."
+    except Exception as exc:
+        return f"Ошибка: {exc}"
+
+
 def create_project(name: str):
     _record("create_project", name=name)
     try:
         paths = ProjectPaths.for_name(name).ensure()
-        return f"Проект «{paths.name}» готов. Постоянная папка: {paths.root}"
+        choices = list_projects()
+        return (
+            gr.Dropdown(choices=choices, value=paths.name),
+            "",
+            project_summary(paths.name),
+        )
     except Exception as exc:
-        return f"Ошибка: {exc}"
+        return gr.skip(), gr.skip(), f"Ошибка: {exc}"
+
+
+def refresh_projects(selected: str | None):
+    _record("refresh_projects", selected=selected)
+    choices = list_projects()
+    if selected in choices:
+        value = selected
+    else:
+        value = choices[0] if choices else None
+    return gr.Dropdown(choices=choices, value=value), project_summary(value)
 
 
 def inspect_source(folder: str):
@@ -100,24 +162,13 @@ def prepare_project_dataset(name: str, source_folder: str):
         return f"Ошибка подготовки: {exc}", gr.skip()
 
 
-def _latest_checkpoint(paths: ProjectPaths) -> str:
-    found = []
-    for p in paths.checkpoints.glob("epoch-*"):
-        try:
-            found.append((int(p.name.split("-")[-1]), p))
-        except ValueError:
-            pass
-    if not found:
-        return "сохранений пока нет"
-    epoch, path = max(found)
-    return f"последнее сохранение: эпоха {epoch} ({path})"
-
-
 def training_status(name: str):
     _record("refresh_status", name=name)
     global TRAIN_PROCESS
     try:
-        paths = ProjectPaths.for_name(name).ensure()
+        paths = ProjectPaths.for_name(name)
+        if not paths.root.exists():
+            raise RuntimeError("Выбранный проект не найден. Обновите список проектов.")
     except Exception as exc:
         return f"Ошибка: {exc}"
     if TRAIN_PROCESS is not None and TRAIN_PROCESS.poll() is None:
@@ -140,7 +191,9 @@ def start_training(name: str, model_label: str, epochs: int, lr: float, rank: in
     if TRAIN_PROCESS is not None and TRAIN_PROCESS.poll() is None:
         return f"Обучение уже идёт, номер процесса {TRAIN_PROCESS.pid}."
     try:
-        paths = ProjectPaths.for_name(name).ensure()
+        paths = ProjectPaths.for_name(name)
+        if not paths.root.exists():
+            raise RuntimeError("Выбранный проект не найден. Обновите список проектов.")
         if not (paths.dataset / "metadata.jsonl").exists():
             raise RuntimeError("Сначала подготовьте датасет.")
 
@@ -190,6 +243,9 @@ def stop_training():
 
 
 def build_demo() -> gr.Blocks:
+    initial_projects = list_projects()
+    initial_project = initial_projects[0] if initial_projects else None
+
     with gr.Blocks(title="Qwen3-TTS LoRA — обучение голоса") as demo:
         gr.Markdown(
             "# Qwen3-TTS LoRA — обучение голоса\n"
@@ -198,11 +254,29 @@ def build_demo() -> gr.Blocks:
         )
 
         with gr.Tab("Проект"):
-            gr.Markdown("Сначала назовите голос и укажите папку с записями. Всё, что относится к этому голосу, будет храниться в отдельной папке проекта на Google Drive.")
-            project_name = gr.Textbox(
-                label="Имя проекта",
+            gr.Markdown(
+                "Выберите уже сохранённый проект с Google Drive. Если нужен новый голос, создайте новый проект ниже. "
+                "Старые названия вручную вводить больше не нужно."
+            )
+            project_name = gr.Dropdown(
+                label="Существующий проект",
+                choices=initial_projects,
+                value=initial_project,
+                allow_custom_value=False,
+                info="Список проектов, уже сохранённых в папке Qwen3-TTS Training на Google Drive.",
+            )
+            refresh_projects_btn = gr.Button("Обновить список проектов")
+            new_project_name = gr.Textbox(
+                label="Новый проект",
                 placeholder="Например: Путин",
-                info="Просто понятное имя голоса. По нему создаётся отдельная папка с датасетом, сохранениями и готовой LoRA.",
+                info="Заполняйте только когда хотите создать новый голос. После создания проект сразу выберется в списке выше.",
+            )
+            create_btn = gr.Button("Создать проект", variant="primary")
+            project_status = gr.Textbox(
+                label="Состояние проекта",
+                value=project_summary(initial_project),
+                interactive=False,
+                lines=4,
             )
             source_folder = gr.Textbox(
                 label="Папка с исходными аудиофайлами",
@@ -216,10 +290,8 @@ def build_demo() -> gr.Blocks:
                 info="0.6B легче и безопаснее для бесплатной T4. 1.7B крупнее и потенциально сильнее, но требует заметно больше видеопамяти.",
             )
             with gr.Row():
-                create_btn = gr.Button("Создать или открыть проект")
                 inspect_btn = gr.Button("Проверить папку")
                 models_btn = gr.Button("Скачать модели")
-            project_status = gr.Textbox(label="Состояние проекта", interactive=False)
 
         with gr.Tab("Датасет"):
             gr.Markdown(
@@ -283,7 +355,19 @@ def build_demo() -> gr.Blocks:
                 refresh_btn = gr.Button("Обновить состояние")
             train_status = gr.Textbox(label="Состояние обучения", interactive=False, lines=3)
 
-        create_btn.click(create_project, project_name, project_status, api_name="create_project")
+        project_name.change(project_summary, project_name, project_status, api_name="project_status")
+        create_btn.click(
+            create_project,
+            new_project_name,
+            [project_name, new_project_name, project_status],
+            api_name="create_project",
+        )
+        refresh_projects_btn.click(
+            refresh_projects,
+            project_name,
+            [project_name, project_status],
+            api_name="refresh_projects",
+        )
         inspect_btn.click(inspect_source, source_folder, project_status, api_name="inspect_source")
         models_btn.click(download_models, model, project_status, api_name="download_models")
         prepare_btn.click(prepare_project_dataset, [project_name, source_folder], [dataset_status, epochs], api_name="prepare_dataset")
