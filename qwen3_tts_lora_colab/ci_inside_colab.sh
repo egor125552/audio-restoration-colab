@@ -18,7 +18,10 @@ python3 qwen3_tts_lora_colab/colab_stream.py
   qwen3_tts_lora_colab/project.py \
   qwen3_tts_lora_colab/app.py \
   qwen3_tts_lora_colab/prepare_dataset.py \
-  qwen3_tts_lora_colab/asr_worker.py
+  qwen3_tts_lora_colab/asr_worker.py \
+  qwen3_tts_lora_colab/train_lora.py \
+  qwen3_tts_lora_colab/inference_lora.py \
+  qwen3_tts_lora_colab/e2e_gradio.py
 
 HF_HOME="/tmp/qwen3-gradio-hf" HF_HUB_CACHE="/tmp/qwen3-drive-model-cache" "$TTS_PY" - <<'PY'
 from gradio.tunneling import BINARY_PATH
@@ -78,9 +81,34 @@ app = Path('qwen3_tts_lora_colab/app.py').read_text(encoding='utf-8')
 assert 'label="Существующий проект"' in app
 assert 'label="Новый проект"' in app
 assert 'Обновить список проектов' in app
-assert 'project_name.change(project_summary' in app
+assert 'project_name.change(' in app
+assert 'project_changed' in app
 assert 'gr.Dropdown(choices=choices, value=paths.name)' in app
 assert 'label="Имя проекта"' not in app
+assert 'label="Batch size"' in app
+assert 'label="Накопление градиентов"' in app
+assert 'Gradient checkpointing' in app
+assert 'with gr.Tab("Инференс")' in app
+assert 'Checkpoint для озвучивания' in app
+assert 'Референс голоса' in app
+assert 'generate_inference' in app
+assert 'PREPARING_PROJECT' in app
+assert 'OP_LOCK = threading.Lock()' in app
+
+trainer = Path('qwen3_tts_lora_colab/train_lora.py').read_text(encoding='utf-8')
+assert 'p.add_argument("--batch_size", type=int, default=1)' in trainer
+assert 'p.add_argument("--gradient_accumulation_steps", type=int, default=4)' in trainer
+assert 'argparse.BooleanOptionalAction' in trainer
+assert 'gradient_checkpointing' in trainer
+assert 'attention_implementation' in trainer
+
+inference = Path('qwen3_tts_lora_colab/inference_lora.py').read_text(encoding='utf-8')
+assert 'generate_voice_clone(' in inference
+assert 'x_vector_only_mode' in inference
+assert 'non_streaming_mode' in inference
+assert 'subtalker_top_k' in inference
+assert 'repetition_penalty' in inference
+assert 'PeftModel.from_pretrained' in inference
 
 dataset_prep = Path('qwen3_tts_lora_colab/prepare_dataset.py').read_text(encoding='utf-8')
 assert 'seek_step=10' in dataset_prep
@@ -110,7 +138,7 @@ assert 'ready_port=PORT' not in last
 assert 'run_streamed(cmd)' in last
 assert 'публичную ссылку `gradio.live`' in markdown
 assert 'встроенный прокси' not in markdown.lower()
-print('COLAB PUBLIC GRADIO LINK + PROJECT MANAGER + FAST DATASET PREP WIRED OK')
+print('COLAB PUBLIC GRADIO LINK + ADVANCED TRAINING + INFERENCE UI WIRED OK')
 PY
 
 cat /tmp/qwen3-gradio.log
