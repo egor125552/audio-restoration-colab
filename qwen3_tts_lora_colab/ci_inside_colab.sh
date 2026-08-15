@@ -59,6 +59,11 @@ assert 'Встроенный прокси Colab' not in launcher
 assert 'demo.block_thread()' in launcher
 assert 'build_demo' in launcher
 
+stream = Path('qwen3_tts_lora_colab/colab_stream.py').read_text(encoding='utf-8')
+assert 'ready_port' not in stream
+assert 'on_ready' not in stream
+assert 'port-proxy' not in stream
+
 notebook = json.loads(Path('notebooks/Qwen3_TTS_LoRA_RU.ipynb').read_text(encoding='utf-8'))
 drive_cell = ''.join(notebook['cells'][4]['source'])
 last = ''.join(notebook['cells'][-1]['source'])
