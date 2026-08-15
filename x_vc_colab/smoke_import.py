@@ -34,12 +34,21 @@ if XVC is None or load_xvc is None:
 
 repo_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(repo_root / "x_vc_colab"))
+
+import bootstrap_colab
+import prepare_assets_cli
 from app import build_demo
 from runtime import (
     LATENT_HOP_LENGTH,
     MAX_OFFLINE_CHUNK_SECONDS,
     _plan_offline_chunks,
 )
+
+if not callable(bootstrap_colab.say):
+    raise SystemExit("Colab setup progress helper is not callable.")
+if not callable(prepare_assets_cli.TextProgress):
+    raise SystemExit("Model-download progress helper was not imported.")
+print("COLAB PROGRESS HELPERS OK")
 
 demo = build_demo()
 if demo is None:
