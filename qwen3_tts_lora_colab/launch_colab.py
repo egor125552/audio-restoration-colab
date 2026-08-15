@@ -18,4 +18,5 @@ demo.queue().launch(
     share=False,
     show_error=True,
     prevent_thread_lock=False,
+    quiet=True,
 )
