@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import signal
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import gradio as gr
@@ -74,22 +72,32 @@ def download_models(model_label: str):
         return f"Ошибка загрузки: {exc}"
 
 
+def recommend_epochs(sample_count: int) -> int:
+    """Keep total dataset exposure near Alexandria's tested 250–400 range."""
+    if sample_count <= 0:
+        return 10
+    return max(1, min(15, round(320 / sample_count)))
+
+
 def prepare_project_dataset(name: str, source_folder: str):
     _record("prepare_dataset", name=name, source=source_folder)
     if SMOKE:
-        return "SMOKE: подготовка датасета вызвана."
+        return "SMOKE: подготовка датасета вызвана.", 3
     try:
         if not ASR_PYTHON.exists():
             raise RuntimeError(f"Не найдено окружение ASR: {ASR_PYTHON}")
         result = prepare_dataset(name, source_folder, str(ASR_PYTHON), ASR_MODEL)
         minutes = result["duration_seconds"] / 60
-        return (
+        suggested = recommend_epochs(result["usable"])
+        status = (
             f"Датасет готов. Исходных файлов: {result['source_files']}. "
             f"Фрагментов после нарезки: {result['clips']}. Пригодных: {result['usable']}. "
-            f"Длительность: {minutes:.1f} мин. Папка: {result['dataset']}"
+            f"Длительность: {minutes:.1f} мин. Для такого объёма я поставил {suggested} эпох. "
+            f"Папка: {result['dataset']}"
         )
+        return status, suggested
     except Exception as exc:
-        return f"Ошибка подготовки: {exc}"
+        return f"Ошибка подготовки: {exc}", gr.skip()
 
 
 def _latest_checkpoint(paths: ProjectPaths) -> str:
@@ -225,48 +233,49 @@ def build_demo() -> gr.Blocks:
         with gr.Tab("Обучение"):
             gr.Markdown(
                 "### Что означают настройки\n"
-                "Если не хочется разбираться, для первого запуска можно оставить значения по умолчанию. "
-                "Они подобраны как разумная стартовая точка для T4."
+                "Если не хочется разбираться, оставьте предложенные значения. После подготовки датасета число эпох "
+                "подбирается автоматически по количеству фрагментов."
             )
             epochs = gr.Number(
                 label="Всего эпох",
-                value=20,
+                value=10,
                 minimum=1,
                 precision=0,
-                info="Сколько раз модель полностью пройдёт весь ваш датасет. Больше эпох сильнее привязывают голос, но слишком большое число может ухудшить естественность. Начните с 20.",
+                info="Эпоха — один полный проход по всем фрагментам. Слишком много эпох может переобучить голос и вызвать кашу. После подготовки датасета это число подставится автоматически; его можно изменить вручную.",
             )
             lr = gr.Number(
                 label="Скорость обучения",
                 value=0.000001,
-                info="Насколько сильно модель меняется на каждом шаге. Слишком большое значение может быстро испортить голос. Для первого обучения оставьте 0.000001.",
+                info="Насколько сильно LoRA меняется на каждом шаге. Слишком большое значение может быстро испортить голос. Для первого обучения оставьте 0.000001.",
             )
             rank = gr.Dropdown(
                 label="Размер адаптера LoRA",
                 choices=[8, 16, 32, 64],
                 value=64,
-                info="Сколько возможностей даём LoRA для запоминания нового голоса. Больше — точнее подстройка, но больше памяти и выше риск переобучения. 64 — хороший старт для отдельного голоса.",
+                info="Сколько возможностей даём адаптеру для запоминания нового голоса. Больше — больше ёмкость и расход памяти. Значение 64 проверено Alexandria как хороший стандарт для одного голоса.",
             )
             alpha = gr.Dropdown(
                 label="Множитель LoRA",
                 choices=[16, 32, 64, 128],
                 value=128,
-                info="Насколько сильно LoRA влияет на базовую Qwen3-TTS во время обучения. Обычно его подбирают вместе с размером адаптера. Для размера 64 оставьте 128.",
+                info="Масштаб влияния адаптера. Его используют вместе с размером LoRA. Для размера 64 проверенная пара — 128, поэтому без причины менять её не нужно.",
             )
             grad_accum = gr.Dropdown(
                 label="Накопление градиентов",
                 choices=[1, 2, 4, 8],
                 value=4,
-                info="Позволяет имитировать более крупную пачку данных, не забивая видеопамять. Больше значение экономнее по VRAM, но один большой шаг занимает дольше. Для T4 оставьте 4.",
+                info="Объединяет несколько маленьких шагов перед изменением весов. Это помогает экономить видеопамять. Для T4 значение 4 — нормальный безопасный вариант.",
             )
             resume = gr.Checkbox(
                 label="Продолжить с последнего сохранения",
                 value=True,
-                info="Если Colab отключился или обучение было остановлено, продолжить с последней полностью сохранённой эпохи вместо начала с нуля. Обычно лучше держать включённым.",
+                info="Если Colab отключился или вы остановили обучение, продолжить с последней полностью сохранённой эпохи. Обычно лучше оставить включённым.",
             )
             gr.Markdown(
-                "Во время обучения полоска в консоли показывает текущую эпоху, шаг и loss. "
-                "Loss — это числовая оценка ошибки модели: в общем случае хочется, чтобы он со временем снижался, "
-                "но качество голоса всё равно нужно проверять ушами. После каждой эпохи создаётся сохранение на Google Drive."
+                "Полоска в консоли показывает текущую эпоху, шаг и loss. Loss — это оценка ошибки модели. "
+                "Она должна в целом снижаться, но слишком низкий loss тоже может означать переобучение. "
+                "Для LoRA Alexandria на поддерживаемом языке считает область около 4.1–4.2 хорошей целью; ниже примерно 4.1 возрастает риск зажёванной речи. "
+                "После каждой эпохи создаётся сохранение на Google Drive."
             )
             with gr.Row():
                 train_btn = gr.Button("Начать обучение", variant="primary")
@@ -277,7 +286,7 @@ def build_demo() -> gr.Blocks:
         create_btn.click(create_project, project_name, project_status, api_name="create_project")
         inspect_btn.click(inspect_source, source_folder, project_status, api_name="inspect_source")
         models_btn.click(download_models, model, project_status, api_name="download_models")
-        prepare_btn.click(prepare_project_dataset, [project_name, source_folder], dataset_status, api_name="prepare_dataset")
+        prepare_btn.click(prepare_project_dataset, [project_name, source_folder], [dataset_status, epochs], api_name="prepare_dataset")
         train_btn.click(start_training, [project_name, model, epochs, lr, rank, alpha, grad_accum, resume], train_status, api_name="start_training")
         stop_btn.click(stop_training, None, train_status, api_name="stop_training")
         refresh_btn.click(training_status, project_name, train_status, api_name="refresh_status")
