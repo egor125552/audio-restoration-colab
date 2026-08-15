@@ -14,6 +14,7 @@ ASR_PY="$ROOT/asr-env/bin/python"
 
 "$TTS_PY" qwen3_tts_lora_colab/smoke_import.py
 python3 qwen3_tts_lora_colab/colab_stream.py
+"$TTS_PY" -m py_compile qwen3_tts_lora_colab/prepare_dataset.py qwen3_tts_lora_colab/asr_worker.py
 
 HF_HOME="/tmp/qwen3-gradio-hf" HF_HUB_CACHE="/tmp/qwen3-drive-model-cache" "$TTS_PY" - <<'PY'
 from gradio.tunneling import BINARY_PATH
@@ -64,6 +65,20 @@ assert 'ready_port' not in stream
 assert 'on_ready' not in stream
 assert 'port-proxy' not in stream
 
+dataset_prep = Path('qwen3_tts_lora_colab/prepare_dataset.py').read_text(encoding='utf-8')
+assert 'seek_step=10' in dataset_prep
+assert 'chunk.export(dst, format="wav")' in dataset_prep
+assert '"--batch-size",' in dataset_prep
+assert '"4",' in dataset_prep
+
+asr_worker = Path('qwen3_tts_lora_colab/asr_worker.py').read_text(encoding='utf-8')
+assert 'p.add_argument("--batch-size", type=int, default=4)' in asr_worker
+assert 'max_inference_batch_size=batch_size' in asr_worker
+assert 'audio_batch = [item["audio"] for item in batch]' in asr_worker
+assert 'model.transcribe(audio=audio_batch, language=args.language)' in asr_worker
+assert 'progress.update(len(batch))' in asr_worker
+assert 'TRANSFORMERS_VERBOSITY' in asr_worker
+
 notebook = json.loads(Path('notebooks/Qwen3_TTS_LoRA_RU.ipynb').read_text(encoding='utf-8'))
 drive_cell = ''.join(notebook['cells'][4]['source'])
 last = ''.join(notebook['cells'][-1]['source'])
@@ -78,7 +93,7 @@ assert 'ready_port=PORT' not in last
 assert 'run_streamed(cmd)' in last
 assert 'публичную ссылку `gradio.live`' in markdown
 assert 'встроенный прокси' not in markdown.lower()
-print('COLAB PUBLIC GRADIO LINK + LOCAL TUNNEL CACHE WIRED OK')
+print('COLAB PUBLIC GRADIO LINK + FAST DATASET PREP WIRED OK')
 PY
 
 cat /tmp/qwen3-gradio.log
