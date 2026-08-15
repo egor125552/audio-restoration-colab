@@ -646,7 +646,13 @@ def build_demo() -> gr.Blocks:
             subtalker_top_k = gr.Number(label="Subtalker Top K", value=50, minimum=0, precision=0)
             subtalker_top_p = gr.Number(label="Subtalker Top P", value=1.0, minimum=0.0, maximum=1.0)
             subtalker_temperature = gr.Number(label="Subtalker Temperature", value=0.9, minimum=0.01)
-            max_new_tokens = gr.Number(label="Max new tokens", value=2048, minimum=32, precision=0)
+            max_new_tokens = gr.Number(
+                label="Max new tokens",
+                value=512,
+                minimum=32,
+                precision=0,
+                info="512 — безопасный предел для обычных коротких и средних фраз; при необходимости можно увеличить вручную.",
+            )
             x_vector_only = gr.Checkbox(
                 label="Только x-vector (без ICL)",
                 value=False,
@@ -659,8 +665,9 @@ def build_demo() -> gr.Blocks:
             )
             inference_attention = gr.Dropdown(
                 label="Attention при инференсе",
-                choices=["eager", "sdpa"],
-                value="eager",
+                choices=["sdpa", "eager"],
+                value="sdpa",
+                info="sdpa — оптимизированный PyTorch attention и рекомендуемый вариант для T4; eager оставлен как совместимый запасной режим.",
             )
             generate_btn = gr.Button("Сгенерировать голос", variant="primary")
             generated_audio = gr.Audio(label="Результат", type="filepath", interactive=False)
