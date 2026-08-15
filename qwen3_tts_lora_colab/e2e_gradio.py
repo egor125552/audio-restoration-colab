@@ -52,12 +52,20 @@ def main() -> None:
         body = page.locator("body").inner_text()
         if "Qwen3-TTS LoRA" not in body or "Обучение" not in body:
             raise AssertionError("Русский интерфейс не отрисовался.")
+        if "Существующий проект" not in body or "Новый проект" not in body:
+            raise AssertionError("Менеджер проектов не отрисовался.")
 
-        page.get_by_label("Имя проекта").fill("Smoke Voice")
-        page.get_by_label("Папка с исходными аудиофайлами").fill(str(SOURCE_DIR))
-
-        page.get_by_role("button", name="Создать или открыть проект", exact=True).click()
+        page.get_by_label("Новый проект").fill("Smoke Voice")
+        page.get_by_role("button", name="Создать проект", exact=True).click()
         wait_for("create_project")
+        page.wait_for_timeout(500)
+        if "Smoke Voice" not in page.locator("body").inner_text():
+            raise AssertionError("Созданный проект не появился в интерфейсе.")
+
+        page.get_by_role("button", name="Обновить список проектов", exact=True).click()
+        wait_for("refresh_projects")
+
+        page.get_by_label("Папка с исходными аудиофайлами").fill(str(SOURCE_DIR))
         page.get_by_role("button", name="Проверить папку", exact=True).click()
         wait_for("inspect_source")
         page.get_by_role("button", name="Скачать модели", exact=True).click()
@@ -73,6 +81,8 @@ def main() -> None:
         start = wait_for("start_training")
         if int(start.get("epochs", 0)) != 3:
             raise AssertionError(f"Изменённое число эпох не дошло до Python: {start}")
+        if start.get("name") != "Smoke Voice":
+            raise AssertionError(f"Выбранный проект не дошёл до Python: {start}")
         page.get_by_role("button", name="Обновить состояние", exact=True).click()
         wait_for("refresh_status")
         page.get_by_role("button", name="Остановить обучение", exact=True).click()
@@ -83,11 +93,20 @@ def main() -> None:
     if page_errors:
         raise AssertionError(f"Ошибки страницы: {page_errors}")
 
-    expected = ["create_project", "inspect_source", "download_models", "prepare_dataset", "start_training", "refresh_status", "stop_training"]
+    expected = [
+        "create_project",
+        "refresh_projects",
+        "inspect_source",
+        "download_models",
+        "prepare_dataset",
+        "start_training",
+        "refresh_status",
+        "stop_training",
+    ]
     seen = [x.get("event") for x in records()]
     if seen != expected:
         raise AssertionError(f"Неожиданный порядок callback: {seen}")
-    print("GRADIO E2E OK: все основные кнопки дошли до Python.")
+    print("GRADIO E2E OK: менеджер проектов и основные кнопки дошли до Python.")
 
 
 if __name__ == "__main__":
