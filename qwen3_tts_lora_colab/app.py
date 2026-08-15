@@ -100,9 +100,9 @@ def _latest_checkpoint(paths: ProjectPaths) -> str:
         except ValueError:
             pass
     if not found:
-        return "чекпоинтов пока нет"
+        return "сохранений пока нет"
     epoch, path = max(found)
-    return f"последний checkpoint: эпоха {epoch} ({path})"
+    return f"последнее сохранение: эпоха {epoch} ({path})"
 
 
 def training_status(name: str):
@@ -113,7 +113,7 @@ def training_status(name: str):
     except Exception as exc:
         return f"Ошибка: {exc}"
     if TRAIN_PROCESS is not None and TRAIN_PROCESS.poll() is None:
-        state = f"обучение идёт, PID {TRAIN_PROCESS.pid}"
+        state = f"обучение идёт, номер процесса {TRAIN_PROCESS.pid}"
     elif TRAIN_PROCESS is not None:
         state = f"процесс завершён, код {TRAIN_PROCESS.returncode}"
     else:
@@ -130,7 +130,7 @@ def start_training(name: str, model_label: str, epochs: int, lr: float, rank: in
     if SMOKE:
         return "SMOKE: кнопка обучения дошла до Python."
     if TRAIN_PROCESS is not None and TRAIN_PROCESS.poll() is None:
-        return f"Обучение уже идёт, PID {TRAIN_PROCESS.pid}."
+        return f"Обучение уже идёт, номер процесса {TRAIN_PROCESS.pid}."
     try:
         paths = ProjectPaths.for_name(name).ensure()
         if not (paths.dataset / "metadata.jsonl").exists():
@@ -161,7 +161,7 @@ def start_training(name: str, model_label: str, epochs: int, lr: float, rank: in
         print("\nЗапускаю обучение. Прогресс будет обновляться в этой консоли.", flush=True)
         TRAIN_PROCESS = subprocess.Popen(cmd, env=env, stdout=None, stderr=None)
         TRAIN_PROJECT = paths.name
-        return f"Обучение запущено, PID {TRAIN_PROCESS.pid}. Прогресс смотрите в консоли Colab."
+        return f"Обучение запущено, номер процесса {TRAIN_PROCESS.pid}. Прогресс смотрите в консоли Colab."
     except Exception as exc:
         return f"Ошибка запуска: {exc}"
 
@@ -178,7 +178,7 @@ def stop_training():
         TRAIN_PROCESS.wait(timeout=10)
     except subprocess.TimeoutExpired:
         TRAIN_PROCESS.terminate()
-    return "Команда остановки отправлена. Последний завершённый checkpoint на Drive сохранён."
+    return "Команда остановки отправлена. Последнее завершённое сохранение на Google Drive не потеряется."
 
 
 def build_demo() -> gr.Blocks:
@@ -206,11 +206,11 @@ def build_demo() -> gr.Blocks:
 
         with gr.Tab("Обучение"):
             epochs = gr.Number(label="Всего эпох", value=20, minimum=1, precision=0)
-            lr = gr.Number(label="Learning rate", value=0.000001)
-            rank = gr.Dropdown(label="LoRA rank", choices=[8, 16, 32, 64], value=64)
-            alpha = gr.Dropdown(label="LoRA alpha", choices=[16, 32, 64, 128], value=128)
-            grad_accum = gr.Dropdown(label="Gradient accumulation", choices=[1, 2, 4, 8], value=4)
-            resume = gr.Checkbox(label="Продолжить с последнего checkpoint", value=True)
+            lr = gr.Number(label="Скорость обучения", value=0.000001)
+            rank = gr.Dropdown(label="Размер адаптера LoRA", choices=[8, 16, 32, 64], value=64)
+            alpha = gr.Dropdown(label="Множитель LoRA", choices=[16, 32, 64, 128], value=128)
+            grad_accum = gr.Dropdown(label="Накопление градиентов", choices=[1, 2, 4, 8], value=4)
+            resume = gr.Checkbox(label="Продолжить с последнего сохранения", value=True)
             with gr.Row():
                 train_btn = gr.Button("Начать обучение", variant="primary")
                 stop_btn = gr.Button("Остановить обучение", variant="stop")
