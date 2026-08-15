@@ -76,6 +76,18 @@ class ProjectPaths:
         (self.root / "project.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def list_projects() -> list[str]:
+    root = persistent_root()
+    if not root.exists():
+        return []
+    projects = [
+        path.name
+        for path in root.iterdir()
+        if path.is_dir() and not path.name.startswith(".") and (path / "project.json").is_file()
+    ]
+    return sorted(projects, key=str.casefold)
+
+
 def discover_audio(folder: str | Path) -> list[Path]:
     root = Path(folder).expanduser()
     if not root.exists():
