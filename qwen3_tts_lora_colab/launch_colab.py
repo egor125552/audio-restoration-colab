@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 import os
-import sys
-from pathlib import Path
 
-app = Path(__file__).with_name("app.py")
+from app import build_demo
+
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
-print("Запускаю интерфейс без скрытия stdout/stderr.", flush=True)
-print("Ячейка останется занятой, но весь вывод и прогресс обучения будут видны ниже.", flush=True)
-os.execv(sys.executable, [sys.executable, "-u", str(app)])
+PORT = int(os.environ.get("QWEN_TRAIN_PORT", "7860"))
+
+print("Запускаю интерфейс без внешнего Gradio-туннеля.", flush=True)
+print("Colab откроет локальный порт через свой встроенный прокси.", flush=True)
+print("Ячейка останется занятой, а вывод и прогресс обучения будут видны ниже.", flush=True)
+
+demo = build_demo()
+demo.queue().launch(
+    server_name="127.0.0.1",
+    server_port=PORT,
+    share=False,
+    show_error=True,
+    prevent_thread_lock=False,
+)
