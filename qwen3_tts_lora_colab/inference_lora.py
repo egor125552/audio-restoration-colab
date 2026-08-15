@@ -44,7 +44,7 @@ def base_model_for_project(project_dir: str | Path, fallback: str) -> str:
     return fallback
 
 
-def load_model(base_model: str, adapter_path: str | Path, attention_implementation: str = "eager"):
+def load_model(base_model: str, adapter_path: str | Path, attention_implementation: str = "sdpa"):
     import torch
     from peft import PeftModel
     from qwen_tts import Qwen3TTSModel
@@ -94,10 +94,10 @@ def synthesize(
     subtalker_top_k: int = 50,
     subtalker_top_p: float = 1.0,
     subtalker_temperature: float = 0.9,
-    max_new_tokens: int = 2048,
+    max_new_tokens: int = 512,
     x_vector_only_mode: bool = False,
     non_streaming_mode: bool = True,
-    attention_implementation: str = "eager",
+    attention_implementation: str = "sdpa",
 ) -> tuple[str, str]:
     import soundfile as sf
 
