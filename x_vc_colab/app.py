@@ -12,6 +12,7 @@ SMOKE_MODE = os.environ.get("XVC_SMOKE_MODE") == "1"
 SMOKE_MARKER = Path(
     os.environ.get("XVC_SMOKE_MARKER", "/tmp/xvc-gradio-callbacks.jsonl")
 )
+XVC_HOME = Path(os.environ.get("XVC_HOME", "/content/x-vc")).resolve()
 
 
 def _record(event: str, **payload) -> None:
@@ -20,6 +21,19 @@ def _record(event: str, **payload) -> None:
     SMOKE_MARKER.parent.mkdir(parents=True, exist_ok=True)
     with SMOKE_MARKER.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps({"event": event, **payload}, ensure_ascii=False) + "\n")
+
+
+def _initial_status() -> str:
+    checkpoint = XVC_HOME / "ckpts" / "xvc.pt"
+    config = XVC_HOME / "xvc-colab.yaml"
+    tokenizer = XVC_HOME / "assets" / "glm-4-voice-tokenizer"
+    speaker = XVC_HOME / "assets" / "speech_eres2net_sv_en_voxceleb_16k"
+    if checkpoint.is_file() and config.is_file() and tokenizer.is_dir() and speaker.is_dir():
+        return (
+            "Файлы X-VC уже скачаны первой ячейкой. "
+            "Нажмите «Загрузить модель», чтобы загрузить их в GPU."
+        )
+    return "Файлы модели ещё не подготовлены. Сначала запустите первую ячейку Colab."
 
 
 def load_model_ui(progress=gr.Progress()) -> str:
@@ -85,7 +99,8 @@ def build_demo() -> gr.Blocks:
         gr.Markdown(
             "# X-VC\n"
             "Загрузите исходную речь и короткий пример нужного голоса. "
-            "Для первого запуска нажмите «Загрузить модель»."
+            "Файлы модели заранее готовит первая ячейка Colab; "
+            "кнопка «Загрузить модель» только загружает их в GPU."
         )
 
         source = gr.Audio(
@@ -140,7 +155,7 @@ def build_demo() -> gr.Blocks:
         clear_button = gr.Button("Очистить")
 
         output = gr.Audio(label="Результат", type="filepath")
-        status = gr.Textbox(label="Состояние", value="Модель ещё не загружена.")
+        status = gr.Textbox(label="Состояние", value=_initial_status())
 
         load_button.click(
             fn=load_model_ui,
