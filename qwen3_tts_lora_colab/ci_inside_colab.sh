@@ -14,7 +14,11 @@ ASR_PY="$ROOT/asr-env/bin/python"
 
 "$TTS_PY" qwen3_tts_lora_colab/smoke_import.py
 python3 qwen3_tts_lora_colab/colab_stream.py
-"$TTS_PY" -m py_compile qwen3_tts_lora_colab/prepare_dataset.py qwen3_tts_lora_colab/asr_worker.py
+"$TTS_PY" -m py_compile \
+  qwen3_tts_lora_colab/project.py \
+  qwen3_tts_lora_colab/app.py \
+  qwen3_tts_lora_colab/prepare_dataset.py \
+  qwen3_tts_lora_colab/asr_worker.py
 
 HF_HOME="/tmp/qwen3-gradio-hf" HF_HUB_CACHE="/tmp/qwen3-drive-model-cache" "$TTS_PY" - <<'PY'
 from gradio.tunneling import BINARY_PATH
@@ -65,6 +69,19 @@ assert 'ready_port' not in stream
 assert 'on_ready' not in stream
 assert 'port-proxy' not in stream
 
+project = Path('qwen3_tts_lora_colab/project.py').read_text(encoding='utf-8')
+assert 'def list_projects()' in project
+assert 'not path.name.startswith(".")' in project
+assert '(path / "project.json").is_file()' in project
+
+app = Path('qwen3_tts_lora_colab/app.py').read_text(encoding='utf-8')
+assert 'label="Существующий проект"' in app
+assert 'label="Новый проект"' in app
+assert 'Обновить список проектов' in app
+assert 'project_name.change(project_summary' in app
+assert 'gr.Dropdown(choices=choices, value=paths.name)' in app
+assert 'label="Имя проекта"' not in app
+
 dataset_prep = Path('qwen3_tts_lora_colab/prepare_dataset.py').read_text(encoding='utf-8')
 assert 'seek_step=10' in dataset_prep
 assert 'chunk.export(dst, format="wav")' in dataset_prep
@@ -93,7 +110,7 @@ assert 'ready_port=PORT' not in last
 assert 'run_streamed(cmd)' in last
 assert 'публичную ссылку `gradio.live`' in markdown
 assert 'встроенный прокси' not in markdown.lower()
-print('COLAB PUBLIC GRADIO LINK + FAST DATASET PREP WIRED OK')
+print('COLAB PUBLIC GRADIO LINK + PROJECT MANAGER + FAST DATASET PREP WIRED OK')
 PY
 
 cat /tmp/qwen3-gradio.log
