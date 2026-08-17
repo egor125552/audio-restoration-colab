@@ -64,7 +64,7 @@ def choose_reference(records: list[dict]) -> dict:
     return max(pool, key=lambda r: (len(r.get("text", "")), r.get("duration", 0)))
 
 
-def prepare(project_name: str, source_folder: str, asr_python: str, asr_model: str = "Qwen/Qwen3-ASR-0.6B") -> dict:
+def prepare(project_name: str, source_folder: str, asr_python: str, asr_model: str = "Qwen/Qwen3-ASR-1.7B") -> dict:
     from tqdm.auto import tqdm
 
     paths = ProjectPaths.for_name(project_name).ensure()
@@ -101,7 +101,7 @@ def prepare(project_name: str, source_folder: str, asr_python: str, asr_model: s
         "--language",
         "Russian",
         "--batch-size",
-        "4",
+        "2",
     ]
     subprocess.run(cmd, check=True)
 
