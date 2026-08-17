@@ -27,7 +27,7 @@ MODELS = {
     "Qwen3-TTS 0.6B Base — рекомендуется для T4": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
     "Qwen3-TTS 1.7B Base — тяжелее": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
 }
-ASR_MODEL = "Qwen/Qwen3-ASR-0.6B"
+ASR_MODEL = "Qwen/Qwen3-ASR-1.7B"
 LATEST_ADAPTER = "Готовая LoRA — последняя сохранённая"
 AUTO_REFERENCE = "__AUTO_REFERENCE__"
 LANGUAGES = ["Russian", "Auto", "English", "German", "French", "Spanish", "Italian", "Portuguese", "Chinese", "Japanese", "Korean"]
