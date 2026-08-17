@@ -11,9 +11,9 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--manifest", required=True)
     p.add_argument("--output", required=True)
-    p.add_argument("--model", default="Qwen/Qwen3-ASR-0.6B")
+    p.add_argument("--model", default="Qwen/Qwen3-ASR-1.7B")
     p.add_argument("--language", default="Russian")
-    p.add_argument("--batch-size", type=int, default=4)
+    p.add_argument("--batch-size", type=int, default=2)
     return p.parse_args()
 
 
