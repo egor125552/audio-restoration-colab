@@ -94,6 +94,7 @@ assert 'Референс голоса' in app
 assert 'generate_inference' in app
 assert 'PREPARING_PROJECT' in app
 assert 'OP_LOCK = threading.Lock()' in app
+assert 'ASR_MODEL = "Qwen/Qwen3-ASR-1.7B"' in app
 
 trainer = Path('qwen3_tts_lora_colab/train_lora.py').read_text(encoding='utf-8')
 assert 'p.add_argument("--batch_size", type=int, default=1)' in trainer
@@ -113,11 +114,13 @@ assert 'PeftModel.from_pretrained' in inference
 dataset_prep = Path('qwen3_tts_lora_colab/prepare_dataset.py').read_text(encoding='utf-8')
 assert 'seek_step=10' in dataset_prep
 assert 'chunk.export(dst, format="wav")' in dataset_prep
+assert 'asr_model: str = "Qwen/Qwen3-ASR-1.7B"' in dataset_prep
 assert '"--batch-size",' in dataset_prep
-assert '"4",' in dataset_prep
+assert '"2",' in dataset_prep
 
 asr_worker = Path('qwen3_tts_lora_colab/asr_worker.py').read_text(encoding='utf-8')
-assert 'p.add_argument("--batch-size", type=int, default=4)' in asr_worker
+assert 'p.add_argument("--model", default="Qwen/Qwen3-ASR-1.7B")' in asr_worker
+assert 'p.add_argument("--batch-size", type=int, default=2)' in asr_worker
 assert 'max_inference_batch_size=batch_size' in asr_worker
 assert 'audio_batch = [item["audio"] for item in batch]' in asr_worker
 assert 'model.transcribe(audio=audio_batch, language=args.language)' in asr_worker
